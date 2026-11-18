@@ -1,0 +1,2 @@
+# Libera o receptor Logi Bolt (046d:c548) para o usuário logado, sem root.
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c548", TAG+="uaccess"
