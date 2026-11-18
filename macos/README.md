@@ -64,6 +64,7 @@ A mensagem vai para o stderr. No Mac o Hammerspoon mostra esse texto como notifi
 
 | Arquivo | Função |
 |---|---|
+| `install.sh` | Instalador do macOS: baixa as dependências, cria os links e inicia o Hammerspoon |
 | `kvm-switch.sh` | O script, igual para Mac e Linux |
 | `init.lua` | Configuração do Hammerspoon: registra ⌘⌥1 e ⌘⌥2 e inicia o Hammerspoon no login |
 | `70-logi-bolt.rules` | Regra udev do Linux que libera o receptor Bolt sem root |
@@ -73,15 +74,19 @@ A mensagem vai para o stderr. No Mac o Hammerspoon mostra esse texto como notifi
 Requer Mac com Apple Silicon (exigência do `m1ddc`).
 
 ```sh
-brew install m1ddc hidapitester
-brew install --cask hammerspoon
-
-mkdir -p ~/.hammerspoon
-ln -sf "$PWD/init.lua" "$PWD/kvm-switch.sh" ~/.hammerspoon/
-open -a Hammerspoon
+git clone https://github.com/mpgxc/kvm-switch.git
+kvm-switch/macos/install.sh
 ```
 
-Rode os comandos de dentro desta pasta. Se você já tem um `~/.hammerspoon/init.lua`, não crie o link do `init.lua`: copie o bloco do atalho para o seu arquivo.
+O `install.sh` faz tudo e pode ser rodado de novo sem risco:
+
+1. Instala o Homebrew, se faltar.
+2. Instala `m1ddc`, `hidapitester` e o Hammerspoon.
+3. Cria em `~/.hammerspoon` os links para `init.lua` e `kvm-switch.sh` desta pasta. Se já existir um arquivo seu com esse nome, ele é renomeado para `<nome>.bak-<data>` antes; nesse caso copie o que precisar do backup para o novo `init.lua`.
+4. Reinicia o Hammerspoon para carregar os atalhos.
+5. Confere se o monitor e o receptor Bolt respondem e avisa se não.
+
+A pasta clonada precisa continuar no lugar, porque os links apontam para ela.
 
 Permissões:
 
