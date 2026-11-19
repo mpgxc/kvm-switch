@@ -71,7 +71,7 @@ impl TryFrom<u8> for Channel {
 }
 
 /// Um computador ligado a uma entrada do monitor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub input: InputCode,
     pub name: String,
@@ -81,7 +81,7 @@ pub struct Target {
     pub hotkey: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub targets: Vec<Target>,

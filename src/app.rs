@@ -15,7 +15,7 @@ use crate::{
     domain::{Config, Cycle, InputCode, Kvm, Outcome},
     ports::{Action, Hotkeys},
     ui::{
-        overlay::{self, HudView, SwitcherItem, SwitcherView},
+        overlay::{self, Focus, HudView, SwitcherItem, SwitcherView},
         settings,
     },
 };
@@ -37,23 +37,26 @@ struct InFlight;
 
 impl InFlight {
     fn begin() -> Self {
-        *IN_FLIGHT.0.lock().expect("lock das trocas") += 1;
+        *IN_FLIGHT.0.lock().expect("lock das trocas envenenado") += 1;
         Self
     }
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        *IN_FLIGHT.0.lock().expect("lock das trocas") -= 1;
+        *IN_FLIGHT.0.lock().expect("lock das trocas envenenado") -= 1;
         IN_FLIGHT.1.notify_all();
     }
 }
 
 /// Espera as trocas em andamento terminarem.
 pub fn finish_switches() {
-    let mut running = IN_FLIGHT.0.lock().expect("lock das trocas");
+    let mut running = IN_FLIGHT.0.lock().expect("lock das trocas envenenado");
     while *running > 0 {
-        running = IN_FLIGHT.1.wait(running).expect("lock das trocas");
+        running = IN_FLIGHT
+            .1
+            .wait(running)
+            .expect("lock das trocas envenenado");
     }
 }
 
@@ -160,7 +163,7 @@ impl AppState {
                         }
                         let current = detected
                             .current
-                            .map_or("desconhecida".into(), InputCode::label);
+                            .map_or_else(|| "desconhecida".into(), InputCode::label);
                         this.status = format!(
                             "{} entradas no monitor; exibindo agora: {current}",
                             detected.inputs.len()
@@ -240,7 +243,7 @@ impl AppState {
     }
 
     /// Abre o seletor, ou anda na seleção se ele já estiver aberto.
-    fn step_switcher(&mut self, step: fn(&mut Cycle), cx: &mut Context<Self>) {
+    fn step_switcher(&mut self, step: impl FnOnce(&mut Cycle), cx: &mut Context<Self>) {
         if let Some(active) = &mut self.switcher {
             step(&mut active.cycle);
             active.stepped = Instant::now();
@@ -263,7 +266,7 @@ impl AppState {
             .position(|target| Some(target.input) == local);
         let Some(mut cycle) = Cycle::new(
             targets.len(),
-            here.unwrap_or(targets.len().saturating_sub(1)),
+            here.unwrap_or_else(|| targets.len().saturating_sub(1)),
         ) else {
             return;
         };
@@ -279,8 +282,11 @@ impl AppState {
             .collect();
         // Onde o sistema só mostra o teclado à janela em foco, o seletor precisa do
         // foco para saber quando os modificadores foram soltos.
-        let takes_focus = self.hotkeys.modifiers_held(&shortcut).is_none();
-        let Some(window) = overlay::open_switcher(items, cycle.selected(), takes_focus, cx) else {
+        let focus = match self.hotkeys.modifiers_held(&shortcut) {
+            None => Focus::Take,
+            Some(_) => Focus::Leave,
+        };
+        let Some(window) = overlay::open_switcher(items, cycle.selected(), focus, cx) else {
             return;
         };
         self.switcher = Some(ActiveSwitcher {

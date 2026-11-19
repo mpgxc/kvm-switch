@@ -1,8 +1,8 @@
 //! Painéis flutuantes no centro da tela: o seletor de destinos e os avisos.
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Render, SharedString,
-    Size, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, Div, Entity, Pixels, Render,
+    SharedString, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, div, prelude::*, px, rgb, rgba, size,
 };
 
@@ -11,7 +11,20 @@ use super::theme;
 const CARD: Pixels = px(150.);
 const GAP: Pixels = px(12.);
 const PADDING: Pixels = px(16.);
+const HUD_WIDTH: Pixels = px(560.);
+const HUD_HEIGHT: Pixels = px(96.);
 
+/// Quem fica com o teclado quando um painel abre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// O painel recebe o teclado, para o app saber dos modificadores.
+    Take,
+    /// O app em uso continua com o teclado, onde o sistema deixa escolher (o
+    /// Wayland sempre foca a janela nova).
+    Leave,
+}
+
+#[derive(Debug)]
 pub struct SwitcherItem {
     pub icon: SharedString,
     pub name: SharedString,
@@ -19,6 +32,7 @@ pub struct SwitcherItem {
     pub is_local: bool,
 }
 
+#[derive(Debug)]
 pub struct SwitcherView {
     items: Vec<SwitcherItem>,
     selected: usize,
@@ -60,6 +74,7 @@ impl Render for SwitcherView {
     }
 }
 
+#[derive(Debug)]
 pub struct HudView {
     pub message: SharedString,
 }
@@ -71,7 +86,7 @@ impl Render for HudView {
 }
 
 /// Fundo comum dos painéis: escuro, translúcido, ocupando a janela toda.
-fn panel() -> gpui::Div {
+fn panel() -> Div {
     div()
         .size_full()
         .flex()
@@ -84,22 +99,24 @@ fn panel() -> gpui::Div {
         .text_color(rgb(theme::TEXT))
 }
 
-/// `takes_focus`: o seletor recebe o teclado, para o app saber dos modificadores.
 pub fn open_switcher(
     items: Vec<SwitcherItem>,
     selected: usize,
-    takes_focus: bool,
+    focus: Focus,
     cx: &mut App,
 ) -> Option<WindowHandle<SwitcherView>> {
     let count = items.len() as f32;
     let width = CARD * count + GAP * (count - 1.).max(0.) + PADDING * 2.;
-    open(size(width, CARD + PADDING * 2.), takes_focus, cx, |cx| {
+    open(size(width, CARD + PADDING * 2.), focus, cx, |cx| {
         cx.new(|_| SwitcherView { items, selected })
     })
 }
 
 pub fn open_hud(view: HudView, cx: &mut App) -> Option<AnyWindowHandle> {
-    open(size(px(560.), px(96.)), false, cx, |cx| cx.new(|_| view)).map(Into::into)
+    open(size(HUD_WIDTH, HUD_HEIGHT), Focus::Leave, cx, |cx| {
+        cx.new(|_| view)
+    })
+    .map(Into::into)
 }
 
 pub fn close(window: AnyWindowHandle, cx: &mut App) {
@@ -109,18 +126,17 @@ pub fn close(window: AnyWindowHandle, cx: &mut App) {
         .ok();
 }
 
-/// Abre um painel sem moldura no centro da tela. Sem `focus`, não tira o foco do
-/// app em uso onde o sistema deixa escolher (o Wayland sempre foca a janela nova).
+/// Abre um painel sem moldura no centro da tela.
 fn open<V: Render + 'static>(
     size: Size<Pixels>,
-    focus: bool,
+    focus: Focus,
     cx: &mut App,
     build: impl FnOnce(&mut App) -> Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
         titlebar: None,
-        focus,
+        focus: focus == Focus::Take,
         kind: WindowKind::PopUp,
         is_movable: false,
         window_background: WindowBackgroundAppearance::Transparent,

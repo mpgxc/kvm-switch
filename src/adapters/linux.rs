@@ -7,7 +7,7 @@ mod instance;
 
 use std::{fs, path::PathBuf, sync::Mutex};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 
 pub use self::{
     gnome::GnomeHotkeys,
@@ -18,6 +18,7 @@ use super::{mccs::capability_inputs, run};
 use crate::{domain::InputCode, ports::Monitor};
 
 /// O primeiro monitor que responde por DDC/CI, pelo `ddcutil`.
+#[derive(Debug)]
 pub struct Ddcutil {
     /// Número do barramento I2C do monitor.
     bus: Mutex<Option<String>>,
@@ -43,7 +44,7 @@ impl Ddcutil {
     /// Roda o `ddcutil` direto no barramento do monitor: ~0,2 s por chamada.
     /// Sem `--bus` ele procura o monitor a cada vez.
     fn ddc(&self, args: &[&str]) -> Result<String> {
-        let mut bus = self.bus.lock().expect("lock do barramento");
+        let mut bus = self.bus.lock().expect("lock do barramento envenenado");
         if let Some(known) = bus.as_deref()
             && let Ok(output) = on_bus(known, args)
         {
@@ -99,9 +100,7 @@ fn detect_bus(output: &str) -> Result<String> {
             return Ok(number.to_string());
         }
     }
-    Err(anyhow::anyhow!(
-        "nenhum monitor respondeu por DDC/CI; confira o cabo e o DDC/CI no menu do monitor"
-    ))
+    bail!("nenhum monitor respondeu por DDC/CI; confira o cabo e o DDC/CI no menu do monitor")
 }
 
 /// O `ddcutil getvcp 60 --brief` responde `VCP 60 SNC x0f`: o último campo é a entrada.

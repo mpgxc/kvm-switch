@@ -24,6 +24,19 @@ libc = "0.2"
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
 
+# Os avisos só viram erro na verificação: `cargo clippy --all-targets -- -D warnings`.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+or_fun_call = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unwrap_used = "warn"
+
 # O gpui 0.2.2 puxa a xattr 0.2.3 (via zed-async-tar), que não compila no Linux
 # com libc >= 0.2.190. vendor/xattr é a 0.2.3 com uma constante corrigida;
 # sai daqui quando o gpui deixar de depender dela.

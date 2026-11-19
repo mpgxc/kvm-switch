@@ -23,6 +23,7 @@ const DIR: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindi
 /// Começo do nome dos atalhos criados por este app dentro de `DIR`.
 const OURS: &str = "kvm-switch-";
 
+#[derive(Debug)]
 pub struct GnomeHotkeys {
     /// Este executável, já entre aspas para a linha de comando do atalho.
     program: String,
@@ -40,9 +41,10 @@ impl GnomeHotkeys {
         let current = quoted(&run("gsettings", &["get", SCHEMA, "custom-keybindings"]).context(
             "sem GNOME, crie os atalhos no seu ambiente gráfico rodando `kvm-switch switch <entrada>`",
         )?);
+        let ours = format!("{DIR}{OURS}");
         let others: Vec<&String> = current
             .iter()
-            .filter(|path| !path.starts_with(&format!("{DIR}{OURS}")))
+            .filter(|path| !path.starts_with(&ours))
             .collect();
         // Atalhos de outros programas: dois com a mesma tecla e o GNOME só atende um.
         let mut taken = Vec::new();

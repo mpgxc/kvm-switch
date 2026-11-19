@@ -10,6 +10,8 @@ mod domain;
 mod ports;
 mod ui;
 
+use std::process;
+
 use anyhow::Result;
 use gpui::{App, AppContext as _, Application, KeyBinding, Menu, MenuItem, actions};
 
@@ -22,6 +24,10 @@ use crate::{
 
 actions!(kvm_switch, [Quit]);
 
+/// Código de saída quando o pedido da linha de comando é recusado ou não chega
+/// ao app aberto.
+const EXIT_REFUSED: i32 = 2;
+
 fn main() {
     let first = match adapters::first_action() {
         Ok(Some(action)) => action,
@@ -29,7 +35,7 @@ fn main() {
         Ok(None) => return,
         Err(error) => {
             eprintln!("kvm-switch: {error:#}");
-            std::process::exit(2);
+            process::exit(EXIT_REFUSED);
         }
     };
     // Uma troca pedida com o app fechado roda sem janela, sem esperar o GPUI

@@ -15,6 +15,11 @@ use crate::{
 /// Ícones oferecidos para um destino; cada clique passa para o próximo.
 const ICONS: [&str; 6] = ["🖥", "💻", "🍎", "🐧", "🪟", "🎮"];
 
+const WINDOW_WIDTH: f32 = 960.;
+const WINDOW_HEIGHT: f32 = 440.;
+/// Altura dos campos e dos botões.
+const CONTROL_HEIGHT: f32 = 30.;
+const ICON_WIDTH: f32 = 44.;
 const NAME_WIDTH: f32 = 180.;
 const PORT_WIDTH: f32 = 70.;
 const LOCAL_WIDTH: f32 = 170.;
@@ -22,6 +27,7 @@ const CHANNEL_WIDTH: f32 = 30.;
 const HOTKEY_WIDTH: f32 = 170.;
 
 /// O que o app inteiro compartilha: o estado e a janela de configuração aberta.
+#[derive(Debug)]
 pub struct Shared {
     state: Entity<AppState>,
     settings: Option<WindowHandle<SettingsView>>,
@@ -53,7 +59,7 @@ pub fn open(cx: &mut App) {
         return;
     }
 
-    let bounds = Bounds::centered(None, size(px(960.), px(440.)), cx);
+    let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -92,6 +98,7 @@ impl Field {
     }
 }
 
+#[derive(Debug)]
 pub struct SettingsView {
     state: Entity<AppState>,
     focus: FocusHandle,
@@ -214,7 +221,7 @@ impl SettingsView {
         div()
             .id(field.id())
             .debug_selector(move || format!("{field:?}"))
-            .h(px(30.))
+            .h(px(CONTROL_HEIGHT))
             .px_2()
             .flex()
             .items_center()
@@ -252,7 +259,8 @@ impl SettingsView {
             Some(Channel::Three),
         ];
         let channel_buttons = channels.into_iter().enumerate().map(|(position, channel)| {
-            let label = channel.map_or("–".to_string(), |channel| channel.number().to_string());
+            let label =
+                channel.map_or_else(|| "–".to_string(), |channel| channel.number().to_string());
             button(("channel", index * channels.len() + position), label)
                 .w(px(CHANNEL_WIDTH))
                 .when(target.channel == channel, |button| {
@@ -272,7 +280,7 @@ impl SettingsView {
                     ("icon", index),
                     super::icon(target.icon.clone().into(), px(20.)),
                 )
-                .w(px(44.))
+                .w(px(ICON_WIDTH))
                 .px_0()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.edit_target(index, cx, |target| target.icon = next_icon(&target.icon))
@@ -345,12 +353,13 @@ impl Render for SettingsView {
             .gap_3()
             .text_sm()
             .text_color(rgb(theme::MUTED))
-            .child(div().w(px(44.)).child("Ícone"))
+            .child(div().w(px(ICON_WIDTH)).child("Ícone"))
             .child(div().w(px(NAME_WIDTH)).child("Nome"))
             .child(div().w(px(PORT_WIDTH)).child("Entrada"))
             .child(div().w(px(LOCAL_WIDTH)).child("Onde o app roda"))
             .child(
                 div()
+                    // Os quatro botões de canal e os três vãos de 4 px entre eles.
                     .w(px(CHANNEL_WIDTH * 4. + 12.))
                     .child("Canal Logitech"),
             )
@@ -430,7 +439,7 @@ impl Render for SettingsView {
 fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
     div()
         .id(id)
-        .h(px(30.))
+        .h(px(CONTROL_HEIGHT))
         .px_3()
         .flex()
         .items_center()

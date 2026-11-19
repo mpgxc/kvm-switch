@@ -22,6 +22,10 @@ use crate::{domain::InputCode, ports::Action};
 const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | switcher-next | switcher-previous]\n\
     <entrada> é o valor do VCP 0x60 em decimal, como no config.json";
 
+/// Quem conecta e não escreve não pode travar os próximos pedidos: a leitura
+/// desiste depois deste tempo.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// O socket desta execução, de `first_action` até `listen` começar a atendê-lo.
 static CLAIMED: Mutex<Option<UnixListener>> = Mutex::new(None);
 
@@ -38,22 +42,21 @@ pub fn first_action() -> Result<Option<Action>> {
     // enquanto o app abre ficam na fila em vez de abrirem outro app. Uma troca
     // direta tenta antes rodar sem janela (veja `main`) e só o segura se abrir.
     if !matches!(action, Action::SwitchTo(_)) {
-        *CLAIMED.lock().expect("lock do socket") = Some(claim(&path)?);
+        *CLAIMED.lock().expect("lock do socket envenenado") = Some(claim(&path)?);
     }
     Ok(Some(action))
 }
 
 /// Passa a atender os pedidos das próximas execuções.
 pub fn listen(actions: Sender<Action>) -> Result<()> {
-    let claimed = CLAIMED.lock().expect("lock do socket").take();
+    let claimed = CLAIMED.lock().expect("lock do socket envenenado").take();
     let listener = match claimed {
         Some(listener) => listener,
         None => claim(&socket_path()?)?,
     };
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            // Quem conecta e não escreve não pode travar os próximos pedidos.
-            stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
+            stream.set_read_timeout(Some(REQUEST_TIMEOUT)).ok();
             let mut request = String::new();
             let read = BufReader::new(stream).read_line(&mut request);
             // Linha vazia é só alguém conferindo se há um app aberto (veja `claim`).

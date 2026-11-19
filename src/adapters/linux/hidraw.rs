@@ -21,11 +21,21 @@ const SLOTS: u8 = 6;
 /// Relatório longo do HID++: 20 bytes.
 const LONG_REPORT: u8 = 0x11;
 const REPORT_LEN: usize = 20;
+/// Cabe o maior relatório que o receptor manda, o muito longo do HID++, de 64 bytes.
+const READ_BUFFER_LEN: usize = 64;
 /// Identifica as nossas perguntas entre as de outros programas (Solaar, por exemplo).
 const SOFTWARE_ID: u8 = 0x0e;
+/// Índice da feature IRoot, o mesmo em todo dispositivo. A função 0 dela,
+/// `getFeature`, diz em que índice fica outra feature.
+const IROOT: u8 = 0x00;
+/// Identificador da feature CHANGE_HOST, a do Easy-Switch.
+const CHANGE_HOST: [u8; 2] = [0x18, 0x14];
+/// Função `setCurrentHost` de CHANGE_HOST, no nibble alto do byte que leva o `SOFTWARE_ID`.
+const SET_CURRENT_HOST: u8 = 0x10;
 /// Um periférico em repouso leva até ~1 s para acordar e responder.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
+#[derive(Debug)]
 pub struct LogiReceiver;
 
 impl Peripherals for LogiReceiver {
@@ -43,7 +53,7 @@ impl Peripherals for LogiReceiver {
                 .collect();
             slots
                 .into_iter()
-                .map(|slot| slot.join().expect("thread do slot"))
+                .map(|slot| slot.join().expect("a thread do slot entrou em pânico"))
                 .collect::<Result<Vec<bool>>>()
         })?;
         if !moved.contains(&true) {
@@ -67,11 +77,9 @@ fn switch_slot(receiver: &Path, slot: u8, channel: Channel) -> Result<bool> {
                 receiver.display()
             )
         })?;
-    // IRoot.getFeature(0x1814 CHANGE_HOST): o índice da feature muda de um
-    // dispositivo para outro, então é perguntado a cada troca.
-    send(&mut device, &[slot, 0x00, SOFTWARE_ID, 0x18, 0x14])?;
+    send(&mut device, &change_host_query(slot))?;
     let deadline = Instant::now() + REPLY_TIMEOUT;
-    let mut report = [0u8; 64];
+    let mut report = [0u8; READ_BUFFER_LEN];
     let index = loop {
         let len = read_until(&device, deadline, &mut report)?;
         match feature_reply(&report[..len], slot) {
@@ -80,20 +88,38 @@ fn switch_slot(receiver: &Path, slot: u8, channel: Channel) -> Result<bool> {
             Reply::Unrelated => {}
         }
     };
-    // setCurrentHost(host). O periférico desconecta em seguida, sem responder.
-    send(
-        &mut device,
-        &[slot, index, 0x10 | SOFTWARE_ID, channel.host_index()],
-    )?;
+    // O periférico desconecta em seguida, sem responder.
+    send(&mut device, &set_host_command(slot, index, channel))?;
     Ok(true)
 }
 
-fn send(device: &mut File, payload: &[u8]) -> Result<()> {
+/// IRoot.getFeature(CHANGE_HOST): o índice da feature muda de um dispositivo
+/// para outro, então é perguntado a cada troca.
+fn change_host_query(slot: u8) -> [u8; REPORT_LEN] {
+    let [high, low] = CHANGE_HOST;
+    long_report(&[slot, IROOT, SOFTWARE_ID, high, low])
+}
+
+/// CHANGE_HOST.setCurrentHost(host), no índice que o periférico informou.
+fn set_host_command(slot: u8, index: u8, channel: Channel) -> [u8; REPORT_LEN] {
+    long_report(&[
+        slot,
+        index,
+        SET_CURRENT_HOST | SOFTWARE_ID,
+        channel.host_index(),
+    ])
+}
+
+fn long_report(payload: &[u8]) -> [u8; REPORT_LEN] {
     let mut report = [0u8; REPORT_LEN];
     report[0] = LONG_REPORT;
     report[1..=payload.len()].copy_from_slice(payload);
+    report
+}
+
+fn send(device: &mut File, report: &[u8; REPORT_LEN]) -> Result<()> {
     device
-        .write_all(&report)
+        .write_all(report)
         .context("o receptor Logitech não aceitou o comando")
 }
 
@@ -138,12 +164,12 @@ enum Reply {
 fn feature_reply(report: &[u8], slot: u8) -> Reply {
     match report {
         [] => Reply::NoDevice,
-        [LONG_REPORT, from, 0x00, SOFTWARE_ID, index, ..] if *from == slot => match index {
+        [LONG_REPORT, from, IROOT, SOFTWARE_ID, index, ..] if *from == slot => match index {
             0 => Reply::NoDevice,
             index => Reply::Index(*index),
         },
         // Erro do HID++ 1.0 (slot vazio ou periférico desligado) ou do 2.0 à nossa pergunta.
-        [_, from, 0x8f | 0xff, 0x00, SOFTWARE_ID, ..] if *from == slot => Reply::NoDevice,
+        [_, from, 0x8f | 0xff, IROOT, SOFTWARE_ID, ..] if *from == slot => Reply::NoDevice,
         _ => Reply::Unrelated,
     }
 }
@@ -190,6 +216,23 @@ mod tests {
     ];
     const POWERED_OFF: [u8; 7] = [0x10, 0x02, 0x8f, 0x00, 0x0e, 0x04, 0x00];
     const EMPTY_SLOT: [u8; 7] = [0x10, 0x04, 0x8f, 0x00, 0x0e, 0x09, 0x00];
+
+    #[test]
+    fn the_packets_are_the_ones_logi_host_writes() {
+        // 0x11, slot, índice da feature, função | 0x0e, parâmetros, zeros até 20 bytes.
+        assert_eq!(
+            change_host_query(3),
+            [
+                0x11, 0x03, 0x00, 0x0e, 0x18, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ]
+        );
+        assert_eq!(
+            set_host_command(3, 0x09, Channel::Two),
+            [
+                0x11, 0x03, 0x09, 0x1e, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ]
+        );
+    }
 
     #[test]
     fn reads_the_feature_index_of_each_device() {
