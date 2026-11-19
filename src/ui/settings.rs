@@ -3,9 +3,9 @@
 use gpui::{
     App, AppContext as _, Bounds, BoxShadow, Context, CursorStyle, Decorations, Div, ElementId,
     Entity, FocusHandle, FontWeight, Global, HitboxBehavior, KeyDownEvent, Keystroke, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ResizeEdge, Size,
-    Stateful, Tiling, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowHandle,
-    WindowOptions, canvas, div, hsla, point, prelude::*, px, rgb, size,
+    MouseDownEvent, Pixels, Point, Render, ResizeEdge, Size, Stateful, Tiling, TitlebarOptions,
+    Window, WindowBounds, WindowDecorations, WindowHandle, WindowOptions, canvas, div, hsla, point,
+    prelude::*, px, rgb, size,
 };
 
 use super::theme;
@@ -93,6 +93,10 @@ pub fn open(cx: &mut App) {
         // do sistema, a janela ficaria sem nenhuma. Quem tiver a do sistema avisa em
         // `window_decorations()`, e aí o app não desenha nada.
         window_decorations: decorated.then_some(WindowDecorations::Client),
+        // No macOS isso apaga o botão verde e o clique duplo na barra deixa de dar zoom. No
+        // Linux o GPUI ignora a opção e não tem como pedir tamanho máximo ao compositor; o
+        // maximizar que vier de lá é desfeito em `SettingsView::new`.
+        is_resizable: false,
         ..Default::default()
     };
     let window = cx.open_window(options, |window, cx| {
@@ -129,13 +133,22 @@ pub struct SettingsView {
     state: Entity<AppState>,
     focus: FocusHandle,
     editing: Option<Field>,
-    /// Botão apertado na barra de título; a janela começa a se mover quando o mouse andar.
-    move_pending: bool,
 }
 
 impl SettingsView {
     fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        // A página tem layout fixo e não deve ser maximizada. O menu da janela, Super+↑ e
+        // arrastar até o topo da tela pedem ao compositor sem passar pelo app, então a janela
+        // volta ao tamanho de antes assim que chega maximizada.
+        if cfg!(target_os = "linux") {
+            cx.observe_window_bounds(window, |_, window, _| {
+                if window.is_maximized() {
+                    window.zoom_window();
+                }
+            })
+            .detach();
+        }
         let focus = cx.focus_handle();
         // O teclado chega à raiz da janela, que repassa ao campo em edição.
         window.focus(&focus);
@@ -143,7 +156,6 @@ impl SettingsView {
             state,
             focus,
             editing: None,
-            move_pending: false,
         }
     }
 
@@ -372,9 +384,9 @@ impl SettingsView {
             .child(rest)
     }
 
-    /// Barra de título para quando o app desenha a moldura: arrasta a janela, maximiza com
-    /// dois cliques, abre o menu da janela com o botão direito e traz os botões do GNOME.
-    fn title_bar(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// Barra de título para quando o app desenha a moldura: arrasta a janela, abre o menu da
+    /// janela com o botão direito e traz os botões de minimizar e fechar do GNOME.
+    fn title_bar(window: &Window) -> Div {
         let controls = window.window_controls();
         let buttons = div()
             .flex_1()
@@ -386,13 +398,6 @@ impl SettingsView {
                     window.minimize_window();
                 }))
             })
-            .when(controls.maximize, |buttons| {
-                buttons.child(window_button(
-                    "maximize",
-                    maximize_icon(window.is_maximized()),
-                    |window| window.zoom_window(),
-                ))
-            })
             .child(window_button(
                 "close",
                 div().text_size(px(13.)).child("✕"),
@@ -400,7 +405,6 @@ impl SettingsView {
             ));
 
         div()
-            .id("title-bar")
             .flex_none()
             .h(px(TITLE_BAR_HEIGHT))
             .px_2()
@@ -409,26 +413,7 @@ impl SettingsView {
             .border_b_1()
             .border_color(rgb(theme::BORDER))
             .text_color(rgb(theme::TEXT))
-            // Mover só depois que o mouse anda: com o arrasto pedido já no clique, o
-            // compositor fica com o soltar do botão e o clique duplo nunca chega.
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, _, _| this.move_pending = true),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| this.move_pending = false),
-            )
-            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, window, _| {
-                if std::mem::take(&mut this.move_pending) {
-                    window.start_window_move();
-                }
-            }))
-            .on_click(|event, window, _| {
-                if event.click_count() == 2 {
-                    window.zoom_window();
-                }
-            })
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
             .when(controls.window_menu, |bar| {
                 bar.on_mouse_down(MouseButton::Right, |event, window, _| {
                     window.show_window_menu(event.position);
@@ -558,7 +543,7 @@ impl Render for SettingsView {
                 .bg(rgb(theme::BACKGROUND))
                 .into_any_element(),
             Decorations::Client { tiling } => {
-                let title_bar = self.title_bar(window, cx);
+                let title_bar = Self::title_bar(window);
                 frame(title_bar, page.flex_1(), tiling, window).into_any_element()
             }
         }
@@ -687,7 +672,7 @@ fn window_button(
         .rounded_full()
         .bg(rgb(theme::FIELD))
         .hover(|style| style.bg(rgb(theme::HOVER)))
-        // O clique é do botão: não arrasta a janela nem conta para o clique duplo da barra.
+        // O clique é do botão: não arrasta a janela.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(move |_, window, _| action(window))
         .child(icon)
@@ -696,27 +681,6 @@ fn window_button(
 /// Traço do botão de minimizar.
 fn minimize_icon() -> Div {
     div().mt(px(6.)).w(px(10.)).h(px(1.)).bg(rgb(theme::TEXT))
-}
-
-/// Quadrado do botão de maximizar; com a janela maximizada, dois quadrados (restaurar).
-fn maximize_icon(maximized: bool) -> Div {
-    let square = |side: f32| div().size(px(side)).border_color(rgb(theme::TEXT));
-    if !maximized {
-        return square(10.).border_1();
-    }
-    div()
-        .size(px(10.))
-        .relative()
-        // O de trás só mostra as bordas que o da frente não cobre.
-        .child(
-            square(7.)
-                .absolute()
-                .top_0()
-                .right_0()
-                .border_t_1()
-                .border_r_1(),
-        )
-        .child(square(7.).absolute().bottom_0().left_0().border_1())
 }
 
 /// Caixa de marcar desenhada com bordas: a fonte do GPUI no Linux não tem os símbolos ☑ e ☐.
