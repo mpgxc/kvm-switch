@@ -92,14 +92,23 @@ pub struct Config {
 
 impl Config {
     /// Cria um destino para cada entrada nova. Nunca remove nem altera os existentes.
+    ///
+    /// Cada destino novo recebe o primeiro canal Logitech ainda livre: na ordem em
+    /// que o monitor lista as entradas, a primeira fica com o canal 1, a segunda
+    /// com o 2 e a terceira com o 3. É um palpite que a janela deixa trocar.
     pub fn merge_inputs(&mut self, inputs: &[InputCode]) {
         for &input in inputs {
             if self.target(input).is_none() {
+                let channel = Channel::ALL.into_iter().find(|channel| {
+                    self.targets
+                        .iter()
+                        .all(|target| target.channel != Some(*channel))
+                });
                 self.targets.push(Target {
                     input,
                     name: input.label(),
                     icon: "🖥".into(),
-                    channel: None,
+                    channel,
                     hotkey: None,
                 });
             }
@@ -338,6 +347,26 @@ mod tests {
         config.merge_inputs(&[USB_C, DP]);
         let names: Vec<&str> = config.targets.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["Mac", "DP"]);
+    }
+
+    #[test]
+    fn new_targets_take_the_free_channels_in_order() {
+        let hdmi = InputCode(0x11);
+        let mut config = Config::default();
+        config.merge_inputs(&[USB_C, DP]);
+        // O usuário passou o DP para o canal 3: o HDMI fica com o 2, que sobrou.
+        config.targets[1].channel = Some(Channel::Three);
+        config.merge_inputs(&[USB_C, DP, hdmi, InputCode(0x12)]);
+        let channels: Vec<Option<Channel>> = config.targets.iter().map(|t| t.channel).collect();
+        assert_eq!(
+            channels,
+            [
+                Some(Channel::One),
+                Some(Channel::Three),
+                Some(Channel::Two),
+                None
+            ]
+        );
     }
 
     #[test]

@@ -57,12 +57,12 @@ kvm-switch switcher-previous
 
 ## Usar
 
-1. Na primeira abertura o app lê as entradas do monitor e cria um destino para cada uma. **Detectar entradas** repete a leitura.
+1. Na primeira abertura o app lê as entradas do monitor e cria um destino para cada uma, já com um canal Logitech: 1, 2 e 3 na ordem em que o monitor lista as entradas (USB-C, DP e HDMI num Dell P3225QE). **Detectar entradas** repete a leitura.
 2. Em cada linha:
    - **Ícone:** clique para passar ao próximo.
    - **Nome:** clique, digite, Enter.
    - **Onde o app roda:** marque a entrada em que este computador está ligado. O app usa isso para saber quando o destino pedido é o próprio computador.
-   - **Canal Logitech:** canal Easy-Switch para onde teclado e mouse vão junto com a tela. `–` não mexe neles.
+   - **Canal Logitech:** canal Easy-Switch para onde teclado e mouse vão junto com a tela. Clique em 1, 2 ou 3 para trocar; `–` não mexe neles.
    - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux). Backspace remove, Esc cancela.
    - **Ir:** troca agora, sem atalho.
 3. **Atalho do seletor:** a combinação que abre o painel central.

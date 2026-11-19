@@ -355,6 +355,7 @@ impl Render for SettingsView {
             )
             .child(div().w(px(HOTKEY_WIDTH)).child("Atalho"));
 
+        let has_targets = !rows.is_empty();
         div()
             .id("settings")
             .track_focus(&self.focus)
@@ -384,12 +385,17 @@ impl Render for SettingsView {
                     ))),
             )
             .child(headings)
-            .when(rows.is_empty(), |page| {
+            .when(!has_targets, |page| {
                 page.child(div().text_color(rgb(theme::MUTED)).child(
                     "Nenhuma entrada ainda. Conecte o monitor e clique em Detectar entradas.",
                 ))
             })
             .children(rows)
+            .when(has_targets, |page| {
+                page.child(div().text_sm().text_color(rgb(theme::MUTED)).child(
+                    "Canal Logitech: o canal Easy-Switch para onde teclado e mouse vão junto com a tela. Com –, eles ficam neste computador.",
+                ))
+            })
             .child(
                 div()
                     .mt_4()
