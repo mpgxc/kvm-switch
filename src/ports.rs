@@ -1,0 +1,43 @@
+//! Portas: o que o app precisa de cada sistema operacional.
+//!
+//! O núcleo (`domain`, `app`, `ui`) só conhece estas interfaces. Cada sistema
+//! fornece as implementações em `adapters`.
+
+use anyhow::Result;
+
+use crate::domain::{Channel, InputCode};
+
+/// Controle do monitor por DDC/CI.
+pub trait Monitor: Send + Sync {
+    /// Entradas que o monitor diz ter.
+    fn inputs(&self) -> Result<Vec<InputCode>>;
+    /// Entrada que o monitor está exibindo agora.
+    fn current_input(&self) -> Result<InputCode>;
+    fn set_input(&self, input: InputCode) -> Result<()>;
+}
+
+/// Teclado e mouse com vários canais, conectados a esta máquina.
+pub trait Peripherals: Send + Sync {
+    /// Manda todos os periféricos para o canal. Erro se nenhum for encontrado.
+    fn switch_to(&self, channel: Channel) -> Result<()>;
+}
+
+/// O que um atalho global dispara.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    SwitchTo(InputCode),
+    SwitcherNext,
+    SwitcherPrevious,
+}
+
+/// Atalhos globais. Cada atalho pressionado é entregue como [`Action`] pelo
+/// canal que o adapter recebe ao ser criado.
+///
+/// Formato do atalho: modificadores `ctrl`, `alt`, `shift`, `cmd` (ou `super`)
+/// e uma tecla, unidos por `+`. Exemplo: `cmd+alt+1`.
+pub trait Hotkeys {
+    /// Substitui todos os atalhos registrados. Devolve uma mensagem por atalho recusado.
+    fn rebind(&mut self, bindings: &[(String, Action)]) -> Vec<String>;
+    /// Diz se os modificadores do atalho estão pressionados agora.
+    fn modifiers_held(&self, shortcut: &str) -> bool;
+}
