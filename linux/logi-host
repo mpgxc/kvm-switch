@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Troca o canal Easy-Switch de todos os dispositivos Logitech pareados nos receptores (Bolt/Unifying),
+direto no hidraw via HID++ 2.0 (feature CHANGE_HOST 0x1814). ~20 ms por dispositivo acordado;
+o Solaar CLI leva ~3 s. Acesso ao hidraw vem da regra udev do Solaar (uaccess).
+uso: logi-host <canal 1-3>"""
+import glob, os, select, sys, threading, time
+
+SWID = 0x0A
+
+
+def receivers():
+    for h in sorted(glob.glob('/sys/class/hidraw/hidraw*')):
+        dev = os.path.join(h, 'device')
+        try:
+            uevent = open(os.path.join(dev, 'uevent')).read().upper()
+            desc = open(os.path.join(dev, 'report_descriptor'), 'rb').read(3)
+        except OSError:
+            continue
+        # interface HID++ (vendor page 0xFF00) de um receptor Logitech
+        if ':0000046D:' in uevent and 'RECEIVER' in uevent and desc == b'\x06\x00\xff':
+            yield '/dev/' + os.path.basename(h)
+
+
+def send(fd, slot, feat, fn, params=b''):
+    os.write(fd, (bytes([0x11, slot, feat, (fn << 4) | SWID]) + params).ljust(20, b'\0'))
+
+
+def request(fd, slot, feat, fn, params=b'', timeout=3.0):
+    """Resposta (payload) ou None se erro/offline/sem resposta."""
+    send(fd, slot, feat, fn, params)
+    end = time.monotonic() + timeout
+    while (left := end - time.monotonic()) > 0:
+        if not select.select([fd], [], [], left)[0]:
+            return None
+        r = os.read(fd, 64)
+        if len(r) < 5 or r[1] != slot:
+            continue
+        if r[2] == 0x8F or (r[2] == 0xFF and r[3] == feat):  # erro HID++ 1.0 (offline) / 2.0
+            return None
+        if r[2] == feat and r[3] == (fn << 4) | SWID:
+            return r[4:]
+    return None
+
+
+def switch(path, slot, host, done):
+    try:
+        fd = os.open(path, os.O_RDWR)  # um fd por thread: cada fd recebe sua cópia dos reports
+    except OSError:
+        return
+    try:
+        r = request(fd, slot, 0x00, 0, b'\x18\x14')  # ROOT.getFeature(CHANGE_HOST)
+        if r and r[0]:
+            send(fd, slot, r[0], 1, bytes([host]))  # CHANGE_HOST.setCurrentHost; o device desconecta, sem resposta
+            done.append(slot)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ('1', '2', '3'):
+        sys.exit(__doc__)
+    host = int(sys.argv[1]) - 1
+    done, threads = [], []
+    for path in receivers():
+        for slot in range(1, 7):
+            t = threading.Thread(target=switch, args=(path, slot, host, done))
+            t.start()
+            threads.append(t)
+    for t in threads:
+        t.join()
+    print(f'canal {sys.argv[1]}: slots {sorted(done)}' if done else 'nenhum dispositivo trocado')
+    sys.exit(0 if done else 1)
+
+
+main()

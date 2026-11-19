@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Troca a entrada do monitor via DDC/CI (VCP 0x60).
+#   monitor-input usbc|dp|hdmi|next|get
+# Valores do Dell P3225QE: 0x0f DisplayPort, 0x11 HDMI, 0x1b USB-C.
+# Outro monitor: MONITOR_MODEL="..." (nome do `ddcutil detect`).
+# usbc = Mac: também leva mouse e teclado (Bolt) para o canal Easy-Switch 1 (logi-host).
+# A volta não é possível por software daqui: use o botão Easy-Switch ou o Mac.
+# Velocidade: o barramento I2C fica em cache (ddcutil --model faz detecção completa, ~1,5 s).
+set -euo pipefail
+MODEL="${MONITOR_MODEL:-DELL P3225QE}"
+OTHER_PC_CHANNEL="${OTHER_PC_CHANNEL:-1}"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/monitor-input-bus"
+
+notify() { notify-send -a Monitor -i video-display "Monitor" "$1" 2>/dev/null || echo "$1"; }
+refresh_bus() {
+  BUS="$(ddcutil detect 2>/dev/null | awk -v m="$MODEL" '
+    /I2C bus:/ { b = $NF; sub(/.*i2c-/, "", b) }
+    /Model:/ && index($0, m) { print b; exit }')"
+  [[ -n "$BUS" ]] || { notify "Monitor $MODEL não encontrado via DDC/CI."; exit 1; }
+  mkdir -p "$(dirname "$CACHE")"
+  echo "$BUS" >"$CACHE"
+}
+BUS="$(cat "$CACHE" 2>/dev/null || true)"
+[[ -n "$BUS" ]] || refresh_bus
+
+ddc() { ddcutil --bus "$BUS" --skip-ddc-checks "$@"; }
+set_input() { ddc --noverify setvcp 60 "$1" >/dev/null; }   # ddcutil 2.2.5 imprime trace de debug no stdout com --noverify
+# read_input: CUR=x0f|x11|x1b; se o bus em cache falhar, redetecta uma vez
+read_input() {
+  CUR="$(ddc --brief getvcp 60 2>/dev/null | awk '{print tolower($4)}' || true)"   # "VCP 60 SNC x0f" -> x0f
+  if [[ -z "$CUR" ]]; then
+    refresh_bus
+    CUR="$(ddc --brief getvcp 60 | awk '{print tolower($4)}')"
+  fi
+}
+# monitor e mouse/teclado em paralelo
+to_mac() { "$(dirname "$0")/logi-host" "$OTHER_PC_CHANNEL" >/dev/null & set_input 0x1b; wait; }
+# switch_to <código VCP sem 0x> <rótulo>: não faz nada se já está na entrada alvo
+switch_to() {
+  read_input
+  if [[ "$CUR" == "x$1" ]]; then
+    notify "Já está em $2; nada a trocar."
+    return 0
+  fi
+  if [[ "$1" == 1b ]]; then to_mac; else set_input "0x$1"; fi
+}
+case "${1:-}" in
+  usbc) switch_to 1b "USB-C (Mac)" ;;
+  dp)   switch_to 0f "DisplayPort (este PC)" ;;
+  hdmi) switch_to 11 "HDMI" ;;
+  get)  read_input; echo "$CUR" ;;
+  next)
+    read_input
+    case "$CUR" in
+      x0f) set_input 0x11 ;;   # DP    -> HDMI
+      x11) to_mac ;;           # HDMI  -> USB-C (Mac)
+      *)   set_input 0x0f ;;   # USB-C -> DP
+    esac ;;
+  *) echo "uso: monitor-input usbc|dp|hdmi|next|get" >&2; exit 2 ;;
+esac

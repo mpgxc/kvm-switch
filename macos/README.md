@@ -67,7 +67,6 @@ A mensagem vai para o stderr. No Mac o Hammerspoon mostra esse texto como notifi
 | `install.sh` | Instalador do macOS: baixa as dependências, cria os links e inicia o Hammerspoon |
 | `kvm-switch.sh` | O script, igual para Mac e Linux |
 | `init.lua` | Configuração do Hammerspoon: registra ⌘⌥1 e ⌘⌥2 e inicia o Hammerspoon no login |
-| `70-logi-bolt.rules` | Regra udev do Linux que libera o receptor Bolt sem root |
 
 ## Instalação no macOS
 
@@ -97,18 +96,11 @@ Depois de editar o `init.lua`, use Reload Config no menu do Hammerspoon. Mudanç
 
 ## Instalação no Linux
 
-1. Copie esta pasta para a máquina.
-2. Instale o `ddcutil` e o `notify-send` (pacote `libnotify`, o nome varia por distribuição) pelo gerenciador de pacotes.
-3. Baixe o `hidapitester` em <https://github.com/todbot/hidapitester/releases> e coloque o binário no `PATH`, por exemplo em `/usr/local/bin`.
-4. Libere o receptor Bolt:
-   ```sh
-   sudo cp 70-logi-bolt.rules /etc/udev/rules.d/
-   sudo udevadm control --reload && sudo udevadm trigger
-   ```
-5. Confira se o monitor responde com `ddcutil detect`. Se der erro de permissão, adicione seu usuário ao grupo `i2c` e entre de novo na sessão.
-6. Nos atalhos personalizados do ambiente gráfico, crie:
-   - Super+Alt+1 → `/caminho/para/kvm-switch.sh 1`
-   - Super+Alt+2 → `/caminho/para/kvm-switch.sh 2`
+O lado Linux tem instalador e scripts próprios, sem `hidapitester`: veja [`../linux`](../linux/README.md).
+
+```sh
+kvm-switch/linux/install.sh
+```
 
 ## Testar pelo terminal
 
