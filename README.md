@@ -72,6 +72,25 @@ kvm-switch quit               # encerra o app aberto, se houver
 kvm-switch tray               # põe o ícone na barra (só no Linux)
 ```
 
+#### Pacote .deb
+
+```sh
+linux/deb.sh
+```
+
+Gera `target/release/kvm-switch_<versão>_<arquitetura>.deb`, com as mesmas dependências de compilação do `install.sh --app`. Instale com `sudo apt install ./kvm-switch_*.deb`: o apt traz `ddcutil`, `libglib2.0-bin`, Vulkan e as bibliotecas do GPUI, e recomenda o `solaar`. O pacote põe o binário em `/usr/bin/kvm-switch`, o atalho no menu e o ícone na barra a cada login (`/etc/xdg/autostart`), para todos os usuários. Diferente do `install.sh`, não remove os atalhos da versão em script nem abre o app.
+
+### Releases
+
+Cada tag `v*` enviada ao GitHub dispara `.github/workflows/release.yml`, que roda `macos/bundle.sh` (Apple Silicon) e `linux/deb.sh` (Ubuntu 22.04, amd64) e publica o `.dmg` e o `.deb` numa release. O `release.sh` faz a tag:
+
+```sh
+./release.sh 0.2.0   # põe 0.2.0 no Cargo.toml e no Cargo.lock, commita, cria a tag v0.2.0 e envia
+./release.sh         # publica a versão que já está no Cargo.toml
+```
+
+Ele só roda na `main` limpa e igual à `origin/main`, e recusa uma tag que já existe.
+
 ## Usar
 
 1. Na primeira abertura o app lê as entradas do monitor e cria um destino para cada uma, já com um canal Logitech: 1, 2 e 3 na ordem em que o monitor lista as entradas (USB-C, DP e HDMI num Dell P3225QE). **Detectar entradas** repete a leitura.

@@ -1,0 +1,52 @@
+# Publica uma release com o .dmg (macOS, Apple Silicon) e o .deb (Ubuntu, amd64)
+# a cada tag v*: `git tag v0.1.0 && git push origin v0.1.0`.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: macos/bundle.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: target/release/*.dmg
+
+  linux:
+    # A glibc mais antiga entre as versões suportadas: o .deb roda no 22.04 e depois.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential dpkg-dev pkg-config libxkbcommon-dev \
+            libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libwayland-dev \
+            libfontconfig-dev libfreetype-dev libvulkan1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: linux/deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: target/release/*.deb
+
+  release:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" *.dmg *.deb --repo "$GITHUB_REPOSITORY" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
