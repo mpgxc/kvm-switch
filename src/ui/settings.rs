@@ -1,9 +1,11 @@
 //! Janela de configuração: destinos, nomes, ícones, canais e atalhos.
 
 use gpui::{
-    App, AppContext as _, Bounds, Context, Div, ElementId, Entity, FocusHandle, Global,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Render, Stateful, TitlebarOptions,
-    Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb, size,
+    App, AppContext as _, Bounds, BoxShadow, Context, CursorStyle, Decorations, Div, ElementId,
+    Entity, FocusHandle, FontWeight, Global, HitboxBehavior, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ResizeEdge, Size,
+    Stateful, Tiling, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowHandle,
+    WindowOptions, canvas, div, hsla, point, prelude::*, px, rgb, size,
 };
 
 use super::theme;
@@ -25,6 +27,12 @@ const PORT_WIDTH: f32 = 70.;
 const LOCAL_WIDTH: f32 = 170.;
 const CHANNEL_WIDTH: f32 = 30.;
 const HOTKEY_WIDTH: f32 = 170.;
+/// Moldura desenhada pelo próprio app quando o sistema não desenha uma (GNOME no Wayland).
+const TITLE_BAR_HEIGHT: f32 = 40.;
+const WINDOW_BUTTON_SIZE: f32 = 24.;
+/// Faixa transparente em volta da janela: mostra a sombra e é por onde se redimensiona.
+const SHADOW: f32 = 10.;
+const ROUNDING: f32 = 12.;
 
 /// O que o app inteiro compartilha: o estado e a janela de configuração aberta.
 #[derive(Debug)]
@@ -59,7 +67,17 @@ pub fn open(cx: &mut App) {
         return;
     }
 
-    let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
+    // No Linux a sombra e a barra de título desenhadas pelo app ocupam espaço dentro da janela.
+    let decorated = cfg!(target_os = "linux");
+    let (width, height) = if decorated {
+        (
+            WINDOW_WIDTH + 2. * SHADOW,
+            WINDOW_HEIGHT + TITLE_BAR_HEIGHT + 2. * SHADOW,
+        )
+    } else {
+        (WINDOW_WIDTH, WINDOW_HEIGHT)
+    };
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -67,6 +85,10 @@ pub fn open(cx: &mut App) {
             ..Default::default()
         }),
         app_id: Some(super::APP_ID.into()),
+        // O GNOME não desenha moldura para apps Wayland (não tem o xdg-decoration); pedindo a
+        // do sistema, a janela ficaria sem nenhuma. Quem tiver a do sistema avisa em
+        // `window_decorations()`, e aí o app não desenha nada.
+        window_decorations: decorated.then_some(WindowDecorations::Client),
         ..Default::default()
     };
     let window = cx.open_window(options, |window, cx| {
@@ -103,6 +125,8 @@ pub struct SettingsView {
     state: Entity<AppState>,
     focus: FocusHandle,
     editing: Option<Field>,
+    /// Botão apertado na barra de título; a janela começa a se mover quando o mouse andar.
+    move_pending: bool,
 }
 
 impl SettingsView {
@@ -115,6 +139,7 @@ impl SettingsView {
             state,
             focus,
             editing: None,
+            move_pending: false,
         }
     }
 
@@ -326,10 +351,78 @@ impl SettingsView {
                 })),
             )
     }
+
+    /// Barra de título para quando o app desenha a moldura: arrasta a janela, maximiza com
+    /// dois cliques, abre o menu da janela com o botão direito e traz os botões do GNOME.
+    fn title_bar(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let controls = window.window_controls();
+        let buttons = div()
+            .flex_1()
+            .flex()
+            .justify_end()
+            .gap_3()
+            .when(controls.minimize, |buttons| {
+                buttons.child(window_button("minimize", minimize_icon(), |window| {
+                    window.minimize_window();
+                }))
+            })
+            .when(controls.maximize, |buttons| {
+                buttons.child(window_button(
+                    "maximize",
+                    maximize_icon(window.is_maximized()),
+                    |window| window.zoom_window(),
+                ))
+            })
+            .child(window_button(
+                "close",
+                div().text_size(px(13.)).child("✕"),
+                |window| window.remove_window(),
+            ));
+
+        div()
+            .id("title-bar")
+            .flex_none()
+            .h(px(TITLE_BAR_HEIGHT))
+            .px_2()
+            .flex()
+            .items_center()
+            .border_b_1()
+            .border_color(rgb(theme::BORDER))
+            .text_color(rgb(theme::TEXT))
+            // Mover só depois que o mouse anda: com o arrasto pedido já no clique, o
+            // compositor fica com o soltar do botão e o clique duplo nunca chega.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, _| this.move_pending = true),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.move_pending = false),
+            )
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, window, _| {
+                if std::mem::take(&mut this.move_pending) {
+                    window.start_window_move();
+                }
+            }))
+            .on_click(|event, window, _| {
+                if event.click_count() == 2 {
+                    window.zoom_window();
+                }
+            })
+            .when(controls.window_menu, |bar| {
+                bar.on_mouse_down(MouseButton::Right, |event, window, _| {
+                    window.show_window_menu(event.position);
+                })
+            })
+            // Os vãos dos lados têm a mesma largura, então o título fica no centro, como no GNOME.
+            .child(div().flex_1())
+            .child(div().font_weight(FontWeight::BOLD).child("KVM Switch"))
+            .child(buttons)
+    }
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let config = &state.config;
         let rows: Vec<Div> = config
@@ -366,7 +459,7 @@ impl Render for SettingsView {
             .child(div().w(px(HOTKEY_WIDTH)).child("Atalho"));
 
         let has_targets = !rows.is_empty();
-        div()
+        let page = div()
             .id("settings")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
@@ -375,12 +468,10 @@ impl Render for SettingsView {
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| this.stop_editing(cx)),
             )
-            .size_full()
             .p_6()
             .flex()
             .flex_col()
             .gap_3()
-            .bg(rgb(theme::BACKGROUND))
             .text_color(rgb(theme::TEXT))
             .child(
                 div()
@@ -432,8 +523,173 @@ impl Render for SettingsView {
                     .text_sm()
                     .text_color(rgb(theme::MUTED))
                     .child(state.status.clone()),
-            )
+            );
+
+        match window.window_decorations() {
+            Decorations::Server => page
+                .size_full()
+                .bg(rgb(theme::BACKGROUND))
+                .into_any_element(),
+            Decorations::Client { tiling } => {
+                let title_bar = self.title_bar(window, cx);
+                frame(title_bar, page.flex_1(), tiling, window).into_any_element()
+            }
+        }
     }
+}
+
+/// Moldura da janela desenhada pelo app: sombra, borda, cantos redondos e as bordas que
+/// redimensionam. Nos lados encostados na tela ou em outra janela (`tiling`) não há sombra
+/// nem borda.
+fn frame(
+    title_bar: impl IntoElement,
+    page: impl IntoElement,
+    tiling: Tiling,
+    window: &mut Window,
+) -> Div {
+    // A sombra fica dentro da superfície; o inset diz ao compositor onde a janela começa.
+    window.set_client_inset(px(SHADOW));
+    let (shadow, rounding) = (px(SHADOW), px(ROUNDING));
+    let resize_cursor = canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            let edge = resize_edge(window.mouse_position(), window.viewport_size(), tiling);
+            if let Some(edge) = edge {
+                window.set_cursor_style(resize_cursor(edge), &hitbox);
+            }
+        },
+    )
+    .size_full()
+    .absolute();
+
+    div()
+        .size_full()
+        .when(!tiling.top, |frame| frame.pt(shadow))
+        .when(!tiling.bottom, |frame| frame.pb(shadow))
+        .when(!tiling.left, |frame| frame.pl(shadow))
+        .when(!tiling.right, |frame| frame.pr(shadow))
+        .child(resize_cursor)
+        // Redesenha para o cursor acompanhar a borda sob o mouse.
+        .on_mouse_move(|_, window, _| window.refresh())
+        .on_mouse_down(MouseButton::Left, move |event, window, _| {
+            if let Some(edge) = resize_edge(event.position, window.viewport_size(), tiling) {
+                window.start_window_resize(edge);
+            }
+        })
+        .child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .cursor(CursorStyle::Arrow)
+                .bg(rgb(theme::BACKGROUND))
+                .border_color(rgb(theme::BORDER))
+                .when(!tiling.top, |inner| inner.border_t_1())
+                .when(!tiling.bottom, |inner| inner.border_b_1())
+                .when(!tiling.left, |inner| inner.border_l_1())
+                .when(!tiling.right, |inner| inner.border_r_1())
+                .when(!(tiling.top || tiling.left), |inner| {
+                    inner.rounded_tl(rounding)
+                })
+                .when(!(tiling.top || tiling.right), |inner| {
+                    inner.rounded_tr(rounding)
+                })
+                .when(!(tiling.bottom || tiling.left), |inner| {
+                    inner.rounded_bl(rounding)
+                })
+                .when(!(tiling.bottom || tiling.right), |inner| {
+                    inner.rounded_br(rounding)
+                })
+                .when(!tiling.is_tiled(), |inner| {
+                    inner.shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.4),
+                        blur_radius: shadow / 2.,
+                        spread_radius: px(0.),
+                        offset: point(px(0.), px(0.)),
+                    }])
+                })
+                // Dentro da janela o mouse não é borda de redimensionar.
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .child(title_bar)
+                .child(page),
+        )
+}
+
+/// Borda ou canto da janela sob `position`, contando só a faixa da sombra dos lados soltos.
+fn resize_edge(position: Point<Pixels>, size: Size<Pixels>, tiling: Tiling) -> Option<ResizeEdge> {
+    let shadow = px(SHADOW);
+    let top = !tiling.top && position.y < shadow;
+    let bottom = !tiling.bottom && position.y > size.height - shadow;
+    let left = !tiling.left && position.x < shadow;
+    let right = !tiling.right && position.x > size.width - shadow;
+    let edge = match (top, bottom, left, right) {
+        (true, _, true, _) => ResizeEdge::TopLeft,
+        (true, _, _, true) => ResizeEdge::TopRight,
+        (_, true, true, _) => ResizeEdge::BottomLeft,
+        (_, true, _, true) => ResizeEdge::BottomRight,
+        (true, ..) => ResizeEdge::Top,
+        (_, true, ..) => ResizeEdge::Bottom,
+        (.., true, _) => ResizeEdge::Left,
+        (.., true) => ResizeEdge::Right,
+        _ => return None,
+    };
+    Some(edge)
+}
+
+fn resize_cursor(edge: ResizeEdge) -> CursorStyle {
+    match edge {
+        ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+        ResizeEdge::Left | ResizeEdge::Right => CursorStyle::ResizeLeftRight,
+        ResizeEdge::TopLeft | ResizeEdge::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+        ResizeEdge::TopRight | ResizeEdge::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+    }
+}
+
+/// Botão redondo da barra de título, no estilo do GNOME.
+fn window_button(
+    id: &'static str,
+    icon: impl IntoElement,
+    action: fn(&mut Window),
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .size(px(WINDOW_BUTTON_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(rgb(theme::FIELD))
+        .hover(|style| style.bg(rgb(theme::HOVER)))
+        // O clique é do botão: não arrasta a janela nem conta para o clique duplo da barra.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |_, window, _| action(window))
+        .child(icon)
+}
+
+/// Traço do botão de minimizar.
+fn minimize_icon() -> Div {
+    div().mt(px(6.)).w(px(10.)).h(px(1.)).bg(rgb(theme::TEXT))
+}
+
+/// Quadrado do botão de maximizar; com a janela maximizada, dois quadrados (restaurar).
+fn maximize_icon(maximized: bool) -> Div {
+    let square = |side: f32| div().size(px(side)).border_color(rgb(theme::TEXT));
+    if !maximized {
+        return square(10.).border_1();
+    }
+    div()
+        .size(px(10.))
+        .relative()
+        // O de trás só mostra as bordas que o da frente não cobre.
+        .child(
+            square(7.)
+                .absolute()
+                .top_0()
+                .right_0()
+                .border_t_1()
+                .border_r_1(),
+        )
+        .child(square(7.).absolute().bottom_0().left_0().border_1())
 }
 
 fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
