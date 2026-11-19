@@ -59,13 +59,14 @@ kvm-switch switcher-previous
 
 1. Na primeira abertura o app lê as entradas do monitor e cria um destino para cada uma, já com um canal Logitech: 1, 2 e 3 na ordem em que o monitor lista as entradas (USB-C, DP e HDMI num Dell P3225QE). **Detectar entradas** repete a leitura.
 2. Em cada linha:
+   - **Ativo:** desmarcado, o destino sai do seletor: não aparece no painel e o ciclo pula ele. A linha fica apagada, mas continua editável, e o atalho próprio e o **Ir** dele seguem funcionando. Todo destino nasce ativo, inclusive os de um `config.json` antigo.
    - **Ícone:** clique para passar ao próximo: 🖥 💻 🍎 🐧 🪟 🎮. O destino deste computador já nasce com o ícone do sistema (🍎 no macOS, 🐧 no Linux); os outros, com 🖥.
    - **Nome:** clique, digite, Enter.
    - **Onde o app roda:** marque a entrada em que este computador está ligado. O app usa isso para saber quando o destino pedido é o próprio computador.
    - **Canal Logitech:** canal Easy-Switch para onde teclado e mouse vão junto com a tela. Clique em 1, 2 ou 3 para trocar; `–` não mexe neles.
    - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux). Backspace remove, Esc cancela.
    - **Ir:** troca agora, sem atalho.
-3. **Atalho do seletor:** a combinação que abre o painel central.
+3. **Atalho do seletor:** a combinação que abre o painel central, só com os destinos ativos. Sem nenhum ativo, ele não abre.
 
 Se o sistema recusar um atalho (já em uso por outro app, por exemplo), o motivo aparece em vermelho na janela. No GNOME isso vale para os atalhos personalizados de outros programas; uma combinação que o próprio GNOME usa (Super+Alt+←, por exemplo) nem chega à janela para ser gravada.
 

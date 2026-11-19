@@ -79,6 +79,14 @@ pub struct Target {
     /// Canal para onde teclado e mouse vão junto com a tela. `None` = não mexe neles.
     pub channel: Option<Channel>,
     pub hotkey: Option<String>,
+    /// Aparece no seletor. O atalho próprio e o botão Ir funcionam mesmo desligado.
+    /// Arquivos gravados antes deste campo carregam com todos os destinos ativos.
+    #[serde(default = "active")]
+    pub enabled: bool,
+}
+
+fn active() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +121,7 @@ impl Config {
                     icon: DEFAULT_ICON.into(),
                     channel,
                     hotkey: None,
+                    enabled: true,
                 });
             }
         }
@@ -135,6 +144,24 @@ impl Config {
 
     pub fn target(&self, input: InputCode) -> Option<&Target> {
         self.targets.iter().find(|target| target.input == input)
+    }
+
+    /// Destinos que o seletor mostra, os ativos na ordem da lista, e a seleção
+    /// inicial: o destino deste computador, para o primeiro toque já cair no
+    /// vizinho. Sem ele entre os ativos, parte do último, e o primeiro toque cai
+    /// no primeiro. `None` quando nenhum destino está ativo.
+    pub fn switcher(&self) -> Option<(Vec<&Target>, Cycle)> {
+        let targets: Vec<&Target> = self
+            .targets
+            .iter()
+            .filter(|target| target.enabled)
+            .collect();
+        let here = targets
+            .iter()
+            .position(|target| Some(target.input) == self.local_input);
+        let start = here.unwrap_or_else(|| targets.len().saturating_sub(1));
+        let cycle = Cycle::new(targets.len(), start)?;
+        Some((targets, cycle))
     }
 }
 
@@ -304,6 +331,7 @@ mod tests {
             icon: "🖥".into(),
             channel,
             hotkey: None,
+            enabled: true,
         }
     }
 
@@ -420,6 +448,68 @@ mod tests {
         cycle.back();
         assert_eq!(cycle.selected(), 1);
         assert_eq!(Cycle::new(0, 0), None);
+    }
+
+    const HDMI: InputCode = InputCode(0x11);
+
+    /// USB-C, DP e HDMI, com o DP desligado do seletor.
+    fn without_dp(local: Option<InputCode>) -> Config {
+        let mut config = Config::default();
+        config.merge_inputs(&[USB_C, DP, HDMI]);
+        config.targets[1].enabled = false;
+        config.local_input = local;
+        config
+    }
+
+    fn inputs(targets: &[&Target]) -> Vec<InputCode> {
+        targets.iter().map(|target| target.input).collect()
+    }
+
+    #[test]
+    fn new_targets_start_active() {
+        let mut config = Config::default();
+        config.merge_inputs(&[USB_C, DP]);
+        assert!(config.targets.iter().all(|target| target.enabled));
+    }
+
+    #[test]
+    fn switcher_skips_inactive_targets_in_list_order() {
+        let config = without_dp(Some(USB_C));
+        let (targets, mut cycle) = config.switcher().expect("dois ativos");
+        assert_eq!(inputs(&targets), [USB_C, HDMI]);
+        // Parte deste computador: o primeiro toque pula o DP e cai no HDMI.
+        assert_eq!(cycle.selected(), 0);
+        cycle.advance();
+        assert_eq!(targets[cycle.selected()].input, HDMI);
+    }
+
+    #[test]
+    fn switcher_starts_at_this_computer_counted_among_active_ones() {
+        let config = without_dp(Some(HDMI));
+        let (targets, cycle) = config.switcher().expect("dois ativos");
+        assert_eq!(targets[cycle.selected()].input, HDMI);
+        assert_eq!(cycle.selected(), 1);
+    }
+
+    #[test]
+    fn inactive_or_unknown_computer_starts_as_if_absent() {
+        for local in [Some(DP), None] {
+            let config = without_dp(local);
+            let (targets, mut cycle) = config.switcher().expect("dois ativos");
+            assert_eq!(targets[cycle.selected()].input, HDMI, "{local:?}");
+            cycle.advance();
+            assert_eq!(targets[cycle.selected()].input, USB_C, "{local:?}");
+        }
+    }
+
+    #[test]
+    fn switcher_does_not_open_without_active_targets() {
+        let mut config = without_dp(Some(USB_C));
+        for target in &mut config.targets {
+            target.enabled = false;
+        }
+        assert_eq!(config.switcher(), None);
+        assert_eq!(Config::default().switcher(), None);
     }
 
     #[test]

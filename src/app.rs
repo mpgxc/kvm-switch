@@ -83,6 +83,9 @@ pub struct AppState {
 }
 
 struct ActiveSwitcher {
+    /// Entrada de cada destino mostrado, na ordem do painel; `cycle` indexa esta lista,
+    /// não a de todos os destinos.
+    inputs: Vec<InputCode>,
     cycle: Cycle,
     window: WindowHandle<SwitcherView>,
     /// Quando o atalho do seletor foi tocado pela última vez.
@@ -258,19 +261,13 @@ impl AppState {
         let Some(shortcut) = self.config.switcher_hotkey.clone() else {
             return;
         };
-        let targets = &self.config.targets;
         let local = self.config.local_input;
-        // Parte do computador atual, então o primeiro toque já cai no vizinho.
-        let here = targets
-            .iter()
-            .position(|target| Some(target.input) == local);
-        let Some(mut cycle) = Cycle::new(
-            targets.len(),
-            here.unwrap_or_else(|| targets.len().saturating_sub(1)),
-        ) else {
+        // Só os destinos ativos, partindo do computador atual: o primeiro toque já cai no vizinho.
+        let Some((targets, mut cycle)) = self.config.switcher() else {
             return;
         };
         step(&mut cycle);
+        let inputs = targets.iter().map(|target| target.input).collect();
         let items = targets
             .iter()
             .map(|target| SwitcherItem {
@@ -290,6 +287,7 @@ impl AppState {
             return;
         };
         self.switcher = Some(ActiveSwitcher {
+            inputs,
             cycle,
             window,
             stepped: Instant::now(),
@@ -341,9 +339,8 @@ impl AppState {
             return;
         };
         let window = active.window.into();
-        let selected = self.config.targets.get(active.cycle.selected());
-        match selected.map(|target| target.input) {
-            Some(input) => self.switch_then_close(input, Some(window), cx),
+        match active.inputs.get(active.cycle.selected()) {
+            Some(&input) => self.switch_then_close(input, Some(window), cx),
             None => overlay::close(window, cx),
         }
     }

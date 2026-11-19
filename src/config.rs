@@ -67,12 +67,23 @@ mod tests {
                 icon: "🐧".into(),
                 channel: Some(Channel::Two),
                 hotkey: Some("cmd+alt+2".into()),
+                enabled: false,
             }],
             local_input: Some(InputCode(0x1b)),
             switcher_hotkey: Some("cmd+alt+tab".into()),
         };
         save(&path, &config).expect("salvar");
         assert_eq!(load(&path).expect("carregar"), config);
+    }
+
+    #[test]
+    fn file_from_before_the_active_flag_loads_every_target_active() {
+        let path = temp_file("before-enabled");
+        fs::create_dir_all(path.parent().expect("pasta")).expect("criar pasta");
+        let old = r#"{"targets":[{"input":27,"name":"Mac","icon":"🍎","channel":1,"hotkey":null}],"local_input":27}"#;
+        fs::write(&path, old).expect("escrever");
+        let config = load(&path).expect("carregar");
+        assert!(config.targets[0].enabled);
     }
 
     #[test]

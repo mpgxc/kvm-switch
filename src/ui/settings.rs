@@ -17,10 +17,14 @@ use crate::{
 /// Ícones oferecidos para um destino; cada clique passa para o próximo.
 const ICONS: [&str; 6] = ["🖥", "💻", "🍎", "🐧", "🪟", "🎮"];
 
-const WINDOW_WIDTH: f32 = 960.;
-const WINDOW_HEIGHT: f32 = 440.;
+const WINDOW_WIDTH: f32 = 1010.;
+const WINDOW_HEIGHT: f32 = 460.;
 /// Altura dos campos e dos botões.
 const CONTROL_HEIGHT: f32 = 30.;
+const ACTIVE_WIDTH: f32 = 40.;
+const CHECKBOX_SIZE: f32 = 18.;
+/// Opacidade de uma linha fora do seletor.
+const INACTIVE_OPACITY: f32 = 0.45;
 const ICON_WIDTH: f32 = 44.;
 const NAME_WIDTH: f32 = 180.;
 const PORT_WIDTH: f32 = 70.;
@@ -296,10 +300,13 @@ impl SettingsView {
                 }))
         });
 
-        div()
+        let enabled = target.enabled;
+        let rest = div()
             .flex()
             .items_center()
             .gap_3()
+            // Fora do seletor a linha fica apagada, mas continua editável.
+            .when(!enabled, |rest| rest.opacity(INACTIVE_OPACITY))
             .child(
                 button(
                     ("icon", index),
@@ -349,7 +356,20 @@ impl SettingsView {
                     this.state
                         .update(cx, |state, cx| state.switch_to(input, cx));
                 })),
+            );
+
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                checkbox(("enabled", index), enabled)
+                    .debug_selector(move || format!("Enabled({index})"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.edit_target(index, cx, |target| target.enabled = !target.enabled);
+                    })),
             )
+            .child(rest)
     }
 
     /// Barra de título para quando o app desenha a moldura: arrasta a janela, maximiza com
@@ -446,6 +466,7 @@ impl Render for SettingsView {
             .gap_3()
             .text_sm()
             .text_color(rgb(theme::MUTED))
+            .child(div().w(px(ACTIVE_WIDTH)).child("Ativo"))
             .child(div().w(px(ICON_WIDTH)).child("Ícone"))
             .child(div().w(px(NAME_WIDTH)).child("Nome"))
             .child(div().w(px(PORT_WIDTH)).child("Entrada"))
@@ -493,9 +514,15 @@ impl Render for SettingsView {
             })
             .children(rows)
             .when(has_targets, |page| {
-                page.child(div().text_sm().text_color(rgb(theme::MUTED)).child(
-                    "Canal Logitech: o canal Easy-Switch para onde teclado e mouse vão junto com a tela. Com –, eles ficam neste computador.",
-                ))
+                page.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .text_sm()
+                        .text_color(rgb(theme::MUTED))
+                        .child("Ativo: só os destinos marcados aparecem no seletor. O atalho de cada um e o Ir funcionam mesmo desmarcados.")
+                        .child("Canal Logitech: o canal Easy-Switch para onde teclado e mouse vão junto com a tela. Com –, eles ficam neste computador."),
+                )
             })
             .child(
                 div()
@@ -692,6 +719,37 @@ fn maximize_icon(maximized: bool) -> Div {
         .child(square(7.).absolute().bottom_0().left_0().border_1())
 }
 
+/// Caixa de marcar desenhada com bordas: a fonte do GPUI no Linux não tem os símbolos ☑ e ☐.
+fn checkbox(id: impl Into<ElementId>, checked: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w(px(ACTIVE_WIDTH))
+        .h(px(CONTROL_HEIGHT))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .child(
+            div()
+                .size(px(CHECKBOX_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(if checked {
+                    theme::ACCENT
+                } else {
+                    theme::BORDER
+                }))
+                .bg(rgb(if checked { theme::ACCENT } else { theme::FIELD }))
+                .hover(|style| style.border_color(rgb(theme::ACCENT)))
+                .text_size(px(13.))
+                .text_color(rgb(theme::TEXT))
+                .when(checked, |mark| mark.child("✓")),
+        )
+}
+
 fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
     div()
         .id(id)
@@ -855,6 +913,7 @@ mod tests {
                 icon: "🍎".into(),
                 channel: None,
                 hotkey: None,
+                enabled: true,
             }],
             local_input: Some(USB_C),
             switcher_hotkey: Some(SWITCHER.into()),
@@ -938,6 +997,31 @@ mod tests {
         window.cx.simulate_keystrokes("escape");
         assert_eq!(window.config().switcher_hotkey.as_deref(), Some(SWITCHER));
         assert_eq!(window.bindings(), switcher_bindings());
+    }
+
+    #[gpui::test]
+    fn unchecking_active_hides_the_target_from_the_switcher_only(cx: &mut TestAppContext) {
+        let mut window = open("enabled", cx);
+        window.click("Hotkey(0)");
+        window.cx.simulate_keystrokes("ctrl-alt-1");
+        let registered = window.bindings();
+        assert!(registered.contains(&("ctrl+alt+1".to_string(), Action::SwitchTo(USB_C))));
+
+        window.click("Enabled(0)");
+        assert!(!window.config().targets[0].enabled);
+        assert!(
+            !config::load(&window.config_path).expect("carregar").targets[0].enabled,
+            "a mudança é salva na hora"
+        );
+        assert_eq!(window.config().switcher(), None, "sem destinos ativos");
+        assert_eq!(
+            window.bindings(),
+            registered,
+            "o atalho do destino continua"
+        );
+
+        window.click("Enabled(0)");
+        assert!(window.config().targets[0].enabled);
     }
 
     #[gpui::test]
