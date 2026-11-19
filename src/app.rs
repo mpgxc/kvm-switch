@@ -1,21 +1,70 @@
 //! Estado do app e o que cada ação faz. Só conhece as portas, nunca um sistema específico.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
-use gpui::{AnyWindowHandle, Context, WindowHandle};
+use anyhow::Result;
+use gpui::{AnyWindowHandle, Context, Modifiers, WindowHandle};
 
 use crate::{
     adapters::Platform,
     config,
     domain::{Config, Cycle, InputCode, Kvm, Outcome},
     ports::{Action, Hotkeys},
-    ui::overlay::{self, HudView, SwitcherItem, SwitcherView},
+    ui::{
+        overlay::{self, HudView, SwitcherItem, SwitcherView},
+        settings,
+    },
 };
 
 /// Intervalo entre as checagens de "os modificadores do seletor ainda estão pressionados?".
 const SWITCHER_POLL: Duration = Duration::from_millis(30);
+/// Sem como ver o teclado, o seletor confirma depois deste tempo sem toques.
+const SWITCHER_IDLE: Duration = Duration::from_millis(1200);
 /// Tempo que um aviso fica na tela.
 const HUD_DURATION: Duration = Duration::from_millis(1800);
+
+/// Quantas trocas estão em andamento. No Linux o GPUI encerra o app quando a
+/// última janela fecha, e sair no meio de uma troca deixaria o monitor numa
+/// máquina e o teclado em outra: `main` espera por [`finish_switches`] antes de sair.
+static IN_FLIGHT: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// Marca uma troca em andamento enquanto existir.
+struct InFlight;
+
+impl InFlight {
+    fn begin() -> Self {
+        *IN_FLIGHT.0.lock().expect("lock das trocas") += 1;
+        Self
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        *IN_FLIGHT.0.lock().expect("lock das trocas") -= 1;
+        IN_FLIGHT.1.notify_all();
+    }
+}
+
+/// Espera as trocas em andamento terminarem.
+pub fn finish_switches() {
+    let mut running = IN_FLIGHT.0.lock().expect("lock das trocas");
+    while *running > 0 {
+        running = IN_FLIGHT.1.wait(running).expect("lock das trocas");
+    }
+}
+
+/// O aviso que o resultado de uma troca merece. `None`: ela só aconteceu.
+pub fn notice(outcome: &Result<Outcome>, name: &str) -> Option<String> {
+    match outcome {
+        Ok(Outcome::Switched) => None,
+        Ok(Outcome::AlreadyHere) => Some(format!("Você já está em {name}")),
+        Err(error) => Some(format!("{error:#}")),
+    }
+}
 
 pub struct AppState {
     pub config: Config,
@@ -33,6 +82,8 @@ pub struct AppState {
 struct ActiveSwitcher {
     cycle: Cycle,
     window: WindowHandle<SwitcherView>,
+    /// Quando o atalho do seletor foi tocado pela última vez.
+    stepped: Instant,
 }
 
 impl AppState {
@@ -128,28 +179,59 @@ impl AppState {
             Action::SwitchTo(input) => self.switch_to(input, cx),
             Action::SwitcherNext => self.step_switcher(Cycle::advance, cx),
             Action::SwitcherPrevious => self.step_switcher(Cycle::back, cx),
+            // Adiado: a janela lê este estado ao ser montada, e ele está em uso agora.
+            Action::OpenSettings => cx.defer(settings::open),
         }
     }
 
     pub fn switch_to(&mut self, input: InputCode, cx: &mut Context<Self>) {
+        self.switch_then_close(input, None, cx);
+    }
+
+    /// Troca para `input` e só então fecha `finished`, a janela do seletor. Ela
+    /// fecha depois de um eventual aviso abrir, para o app nunca ficar sem janela
+    /// antes de mostrar o aviso.
+    fn switch_then_close(
+        &mut self,
+        input: InputCode,
+        finished: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         // Cópia de propósito: a troca roda fora da thread da interface.
         let Some(target) = self.config.target(input).cloned() else {
+            if let Some(window) = finished {
+                overlay::close(window, cx);
+            }
             return;
         };
         let (kvm, local) = (self.kvm.clone(), self.config.local_input);
         let name = target.name.clone();
+        // A troca roda solta e devolve o resultado por um canal: ela vai até o fim
+        // mesmo que a interface feche no meio do caminho.
+        let (done, outcome) = async_channel::bounded(1);
+        let in_flight = InFlight::begin();
+        cx.background_executor()
+            .spawn(async move {
+                let _in_flight = in_flight;
+                done.try_send(kvm.switch(&target, local)).ok();
+            })
+            .detach();
         cx.spawn(async move |this, cx| {
-            let outcome = cx
-                .background_executor()
-                .spawn(async move { kvm.switch(&target, local) })
-                .await;
-            this.update(cx, |this, cx| match outcome {
-                Ok(Outcome::Switched) => {
-                    this.status = format!("Trocado para {name}");
-                    cx.notify();
+            // O canal só fecha sem resposta se a troca foi descartada com o app encerrando.
+            let outcome = outcome.recv().await;
+            this.update(cx, |this, cx| {
+                if let Ok(outcome) = outcome {
+                    match notice(&outcome, &name) {
+                        Some(message) => this.show_hud(message, cx),
+                        None => {
+                            this.status = format!("Trocado para {name}");
+                            cx.notify();
+                        }
+                    }
                 }
-                Ok(Outcome::AlreadyHere) => this.show_hud(format!("Você já está em {name}"), cx),
-                Err(error) => this.show_hud(format!("{error:#}"), cx),
+                if let Some(window) = finished {
+                    overlay::close(window, cx);
+                }
             })
             .ok();
         })
@@ -160,6 +242,7 @@ impl AppState {
     fn step_switcher(&mut self, step: fn(&mut Cycle), cx: &mut Context<Self>) {
         if let Some(active) = &mut self.switcher {
             step(&mut active.cycle);
+            active.stepped = Instant::now();
             let selected = active.cycle.selected();
             active
                 .window
@@ -193,18 +276,25 @@ impl AppState {
                 is_local: Some(target.input) == local,
             })
             .collect();
-        let Some(window) = overlay::open_switcher(items, cycle.selected(), cx) else {
+        // Onde o sistema só mostra o teclado à janela em foco, o seletor precisa do
+        // foco para saber quando os modificadores foram soltos.
+        let takes_focus = self.hotkeys.modifiers_held(&shortcut).is_none();
+        let Some(window) = overlay::open_switcher(items, cycle.selected(), takes_focus, cx) else {
             return;
         };
-        self.switcher = Some(ActiveSwitcher { cycle, window });
+        self.switcher = Some(ActiveSwitcher {
+            cycle,
+            window,
+            stepped: Instant::now(),
+        });
 
-        // Soltar os modificadores confirma. A checagem é por estado do teclado, e não
-        // por evento da janela, porque o seletor não rouba o foco do app em uso.
+        // Soltar os modificadores confirma. A checagem é periódica, e não por evento
+        // da janela, porque no macOS o seletor não rouba o foco do app em uso.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SWITCHER_POLL).await;
                 let open = this.update(cx, |this, cx| {
-                    if this.switcher.is_some() && !this.hotkeys.modifiers_held(&shortcut) {
+                    if this.switcher_released(&shortcut, cx) {
                         this.commit_switcher(cx);
                     }
                     this.switcher.is_some()
@@ -217,28 +307,56 @@ impl AppState {
         .detach();
     }
 
+    /// O usuário soltou os modificadores do atalho do seletor?
+    fn switcher_released(&self, shortcut: &str, cx: &mut Context<Self>) -> bool {
+        let Some(active) = &self.switcher else {
+            return false;
+        };
+        if let Some(held) = self.hotkeys.modifiers_held(shortcut) {
+            return !held;
+        }
+        let seen = active
+            .window
+            .update(cx, |_, window, _| {
+                window.is_window_active().then(|| window.modifiers())
+            })
+            .ok()
+            .flatten();
+        match seen {
+            Some(held) => !holds(held, shortcut),
+            // A janela não recebeu o foco: não há como ver o teclado.
+            None => active.stepped.elapsed() > SWITCHER_IDLE,
+        }
+    }
+
     fn commit_switcher(&mut self, cx: &mut Context<Self>) {
         let Some(active) = self.switcher.take() else {
             return;
         };
-        overlay::close(active.window.into(), cx);
-        if let Some(target) = self.config.targets.get(active.cycle.selected()) {
-            self.switch_to(target.input, cx);
+        let window = active.window.into();
+        let selected = self.config.targets.get(active.cycle.selected());
+        match selected.map(|target| target.input) {
+            Some(input) => self.switch_then_close(input, Some(window), cx),
+            None => overlay::close(window, cx),
         }
     }
 
-    fn show_hud(&mut self, message: String, cx: &mut Context<Self>) {
+    pub fn show_hud(&mut self, message: String, cx: &mut Context<Self>) {
         self.status = message.clone();
         cx.notify();
-        if let Some(previous) = self.hud.take() {
-            overlay::close(previous, cx);
-        }
-        let Some(window) = overlay::open_hud(
+        let previous = self.hud.take();
+        let opened = overlay::open_hud(
             HudView {
                 message: message.into(),
             },
             cx,
-        ) else {
+        );
+        // O aviso anterior só fecha com o novo já aberto: no Linux o app encerra
+        // quando fica sem janelas.
+        if let Some(previous) = previous {
+            overlay::close(previous, cx);
+        }
+        let Some(window) = opened else {
             return;
         };
         self.hud = Some(window);
@@ -255,4 +373,15 @@ impl AppState {
         })
         .detach();
     }
+}
+
+/// Os modificadores do atalho estão todos em `held`?
+fn holds(held: Modifiers, shortcut: &str) -> bool {
+    shortcut.split('+').all(|part| match part {
+        "ctrl" => held.control,
+        "alt" => held.alt,
+        "shift" => held.shift,
+        "cmd" | "super" => held.platform,
+        _ => true,
+    })
 }

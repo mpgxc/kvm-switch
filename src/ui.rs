@@ -3,6 +3,9 @@
 pub mod overlay;
 pub mod settings;
 
+/// Identidade das janelas no Wayland; liga o app ao `kvm-switch.desktop`.
+const APP_ID: &str = "kvm-switch";
+
 /// Cores do tema escuro, em RGB.
 mod theme {
     pub const BACKGROUND: u32 = 0x1e1f22;

@@ -84,20 +84,22 @@ fn panel() -> gpui::Div {
         .text_color(rgb(theme::TEXT))
 }
 
+/// `takes_focus`: o seletor recebe o teclado, para o app saber dos modificadores.
 pub fn open_switcher(
     items: Vec<SwitcherItem>,
     selected: usize,
+    takes_focus: bool,
     cx: &mut App,
 ) -> Option<WindowHandle<SwitcherView>> {
     let count = items.len() as f32;
     let width = CARD * count + GAP * (count - 1.).max(0.) + PADDING * 2.;
-    open(size(width, CARD + PADDING * 2.), cx, |cx| {
+    open(size(width, CARD + PADDING * 2.), takes_focus, cx, |cx| {
         cx.new(|_| SwitcherView { items, selected })
     })
 }
 
 pub fn open_hud(view: HudView, cx: &mut App) -> Option<AnyWindowHandle> {
-    open(size(px(560.), px(96.)), cx, |cx| cx.new(|_| view)).map(Into::into)
+    open(size(px(560.), px(96.)), false, cx, |cx| cx.new(|_| view)).map(Into::into)
 }
 
 pub fn close(window: AnyWindowHandle, cx: &mut App) {
@@ -107,19 +109,22 @@ pub fn close(window: AnyWindowHandle, cx: &mut App) {
         .ok();
 }
 
-/// Abre um painel sem moldura no centro da tela, sem tirar o foco do app em uso.
+/// Abre um painel sem moldura no centro da tela. Sem `focus`, não tira o foco do
+/// app em uso onde o sistema deixa escolher (o Wayland sempre foca a janela nova).
 fn open<V: Render + 'static>(
     size: Size<Pixels>,
+    focus: bool,
     cx: &mut App,
     build: impl FnOnce(&mut App) -> Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
         titlebar: None,
-        focus: false,
+        focus,
         kind: WindowKind::PopUp,
         is_movable: false,
         window_background: WindowBackgroundAppearance::Transparent,
+        app_id: Some(super::APP_ID.into()),
         ..Default::default()
     };
     cx.open_window(options, |_, cx| build(cx)).ok()

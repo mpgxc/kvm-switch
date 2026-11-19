@@ -22,12 +22,15 @@ pub trait Peripherals: Send + Sync {
     fn switch_to(&self, channel: Channel) -> Result<()>;
 }
 
-/// O que um atalho global dispara.
+/// O que chega de fora das janelas: um atalho global ou um pedido de abertura.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     SwitchTo(InputCode),
     SwitcherNext,
     SwitcherPrevious,
+    /// Mostrar a janela de configuração. No Linux é o que chega quando o
+    /// programa é aberto de novo com o app já rodando.
+    OpenSettings,
 }
 
 /// Atalhos globais. Cada atalho pressionado é entregue como [`Action`] pelo
@@ -38,6 +41,8 @@ pub enum Action {
 pub trait Hotkeys {
     /// Substitui todos os atalhos registrados. Devolve uma mensagem por atalho recusado.
     fn rebind(&mut self, bindings: &[(String, Action)]) -> Vec<String>;
-    /// Diz se os modificadores do atalho estão pressionados agora.
-    fn modifiers_held(&self, shortcut: &str) -> bool;
+    /// Diz se os modificadores do atalho estão pressionados agora. `None` quando
+    /// o sistema só mostra o teclado à janela em foco, caso do Wayland: aí quem
+    /// responde é a janela do seletor.
+    fn modifiers_held(&self, shortcut: &str) -> Option<bool>;
 }

@@ -1,6 +1,17 @@
-# kvm-switch no Linux, em script
+# kvm-switch no Linux
 
-Atalhos do GNOME que trocam a entrada do monitor por DDC/CI e, na ida para o Mac, levam junto o teclado e o mouse Logitech. É a versão em script; o app em Rust da raiz do repositório faz o mesmo com janela de configuração.
+Esta pasta tem o instalador do Linux e a versão em script: atalhos do GNOME que trocam a entrada do monitor por DDC/CI e, na ida para o Mac, levam junto o teclado e o mouse Logitech.
+
+O app em Rust da raiz do repositório faz o mesmo com janela de configuração e destinos editáveis. Use um ou outro:
+
+```sh
+linux/install.sh         # versão em script, descrita abaixo
+linux/install.sh --app   # app: compila, instala e abre (veja o README da raiz)
+```
+
+Os dois modos instalam o `ddcutil` e o `solaar`. O `--app` remove os atalhos da versão em script, porque duas coisas não podem ter a mesma tecla no GNOME.
+
+## Versão em script
 
 | Atalho | Ação |
 |---|---|
@@ -13,7 +24,7 @@ Se o monitor já está na entrada pedida, nada é enviado e aparece a notificaç
 
 A volta do Mac não sai daqui: com teclado e mouse no Mac, este PC não recebe o atalho. Use o atalho do lado do Mac ([`../macos`](../macos/README.md)) ou o botão Easy-Switch 2 e depois Super+Alt+2.
 
-## Instalação
+## Instalação da versão em script
 
 Ubuntu ou Debian com GNOME. Rode como seu usuário, sem `sudo` na frente:
 
@@ -44,7 +55,7 @@ A pasta clonada precisa continuar no lugar, porque os links apontam para ela.
 
 | Arquivo | Função |
 |---|---|
-| `install.sh` | Instalador: dependências, links e atalhos |
+| `install.sh` | Instalador dos dois modos: dependências, links e atalhos, ou a compilação do app |
 | `monitor-input` | Troca a entrada do monitor; para o Mac, chama o `logi-host` em paralelo |
 | `logi-host` | Troca o canal Easy-Switch de todos os periféricos do receptor Logitech |
 | `70-logi-bolt.rules` | Para quem não quer o Solaar: regra udev que libera só o receptor Bolt (`046d:c548`). Copie para `/etc/udev/rules.d/` e rode `sudo udevadm control --reload && sudo udevadm trigger` |

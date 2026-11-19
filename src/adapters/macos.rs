@@ -18,7 +18,7 @@ use global_hotkey::{
     hotkey::{HotKey, Modifiers},
 };
 
-use super::run;
+use super::{mccs::capability_inputs, run};
 use crate::{
     domain::InputCode,
     ports::{Action, Hotkeys, Monitor},
@@ -57,24 +57,6 @@ fn ddpm_inputs(reply: &str) -> Result<Vec<InputCode>> {
         .as_str()
         .context("resposta do DDPM sem capability string")?;
     capability_inputs(capabilities)
-}
-
-/// Valores aceitos pelo VCP 0x60 numa capability string MCCS, como em
-/// `VCP(02 04 60( 1B 0F 11) 87)`.
-fn capability_inputs(capabilities: &str) -> Result<Vec<InputCode>> {
-    let values = capabilities
-        .match_indices("60(")
-        .find(|(at, _)| capabilities[..*at].ends_with([' ', '(']))
-        .and_then(|(at, _)| capabilities[at + 3..].split(')').next())
-        .context("o monitor não informou as entradas (VCP 60)")?;
-    values
-        .split_whitespace()
-        .map(|value| {
-            let code = u8::from_str_radix(value, 16)
-                .with_context(|| format!("entrada inesperada na capability string: {value}"))?;
-            Ok(InputCode(code))
-        })
-        .collect()
 }
 
 /// O `m1ddc get input` imprime o valor de 16 bits do VCP; a entrada é o byte baixo.
@@ -146,25 +128,26 @@ impl Hotkeys for MacHotkeys {
         errors
     }
 
-    fn modifiers_held(&self, shortcut: &str) -> bool {
+    fn modifiers_held(&self, shortcut: &str) -> Option<bool> {
         let Ok(hotkey) = parse(shortcut) else {
-            return false;
+            return Some(false);
         };
         // Um evento vazio carrega os modificadores pressionados neste instante.
         let Ok(event) =
             CGEventSource::new(CGEventSourceStateID::CombinedSessionState).and_then(CGEvent::new)
         else {
-            return false;
+            return Some(false);
         };
         let held = event.get_flags();
-        [
+        let all_held = [
             (Modifiers::META, CGEventFlags::CGEventFlagCommand),
             (Modifiers::ALT, CGEventFlags::CGEventFlagAlternate),
             (Modifiers::CONTROL, CGEventFlags::CGEventFlagControl),
             (Modifiers::SHIFT, CGEventFlags::CGEventFlagShift),
         ]
         .into_iter()
-        .all(|(modifier, flag)| !hotkey.mods.contains(modifier) || held.contains(flag))
+        .all(|(modifier, flag)| !hotkey.mods.contains(modifier) || held.contains(flag));
+        Some(all_held)
     }
 }
 
@@ -196,12 +179,6 @@ mod tests {
     fn a_failed_ddpm_reply_is_an_error() {
         let failed = DDPM_REPLY.replace("PASS", "FAIL");
         assert!(ddpm_inputs(&failed).is_err());
-    }
-
-    #[test]
-    fn capability_string_without_input_list_is_an_error() {
-        // "60" aparece só como valor de outra feature, não como a feature 0x60.
-        assert!(capability_inputs("(VCP(02 14(05 60) 87))").is_err());
     }
 
     #[test]

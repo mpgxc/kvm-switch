@@ -17,5 +17,15 @@ serde_json = "1"
 core-graphics = "0.24"
 global-hotkey = "0.10"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# poll() no hidraw do receptor Logitech.
+libc = "0.2"
+
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+
+# O gpui 0.2.2 puxa a xattr 0.2.3 (via zed-async-tar), que não compila no Linux
+# com libc >= 0.2.190. vendor/xattr é a 0.2.3 com uma constante corrigida;
+# sai daqui quando o gpui deixar de depender dela.
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }

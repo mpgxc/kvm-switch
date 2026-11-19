@@ -61,6 +61,7 @@ pub fn open(cx: &mut App) {
             title: Some("KVM Switch".into()),
             ..Default::default()
         }),
+        app_id: Some(super::APP_ID.into()),
         ..Default::default()
     };
     let window = cx.open_window(options, |window, cx| {
@@ -539,8 +540,8 @@ mod tests {
             Vec::new()
         }
 
-        fn modifiers_held(&self, _: &str) -> bool {
-            false
+        fn modifiers_held(&self, _: &str) -> Option<bool> {
+            Some(false)
         }
     }
 
