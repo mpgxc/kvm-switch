@@ -23,6 +23,18 @@ Não precisa do Xcode completo: os shaders são compilados quando o app abre.
 
 Fechar a janela não encerra o app, que precisa continuar rodando para ouvir os atalhos. Clicar no ícone do Dock abre a configuração de novo; ⌘Q encerra. O ícone 🖥 na barra de menus tem o mesmo menu do Linux (veja [Usar](#usar)).
 
+#### Instalador (.app e .dmg)
+
+```sh
+macos/bundle.sh
+```
+
+Gera `target/release/KVM Switch.app` e `target/release/KVM-Switch-<versão>.dmg`. Abra o `.dmg` e arraste o app para Aplicativos. Só usa o `cargo` e ferramentas que já vêm no macOS (`sips`, `iconutil`, `codesign`, `hdiutil`).
+
+- O app continua precisando de `brew install m1ddc hidapitester` (e do DDPM para detectar as entradas) em cada Mac onde for instalado.
+- A assinatura é ad hoc, sem conta de desenvolvedor da Apple. Na máquina que gerou o `.dmg` ele abre direto. Em outro Mac o Gatekeeper barra o app baixado: libere em Ajustes → Privacidade e Segurança → "Abrir mesmo assim", ou rode `xattr -dr com.apple.quarantine "/Applications/KVM Switch.app"`.
+- Pela linha de comando, o executável fica em `"/Applications/KVM Switch.app/Contents/MacOS/kvm-switch"`.
+
 ### Linux
 
 Ubuntu ou Debian com GNOME. O instalador traz as dependências, compila, instala em `~/.local/bin/kvm-switch`, cria o ícone "KVM Switch" no menu de aplicativos, põe o ícone na barra superior (e o abre a cada login) e abre a janela:
