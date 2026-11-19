@@ -17,10 +17,10 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 
-use crate::{domain::InputCode, ports::Action};
-
-const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | switcher-next | switcher-previous]\n\
-    <entrada> é o valor do VCP 0x60 em decimal, como no config.json";
+use crate::{
+    ports::Action,
+    request::{arguments, parse},
+};
 
 /// Quem conecta e não escreve não pode travar os próximos pedidos: a leitura
 /// desiste depois deste tempo.
@@ -29,13 +29,18 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// O socket desta execução, de `first_action` até `listen` começar a atendê-lo.
 static CLAIMED: Mutex<Option<UnixListener>> = Mutex::new(None);
 
-/// Lê a linha de comando. `None`: o pedido foi entregue ao app já aberto.
+/// Lê a linha de comando. `None`: o pedido foi entregue ao app já aberto, ou
+/// não havia o que fazer.
 pub fn first_action() -> Result<Option<Action>> {
     let request = env::args().skip(1).collect::<Vec<_>>().join(" ");
     let action = parse(&request)?;
     let path = socket_path()?;
     if let Ok(mut running) = UnixStream::connect(&path) {
         writeln!(running, "{}", arguments(action)).context("o app aberto não recebeu o pedido")?;
+        return Ok(None);
+    }
+    // Encerrar um app que não está aberto não pede nada.
+    if action == Action::Quit {
         return Ok(None);
     }
     // Quem vai abrir janela segura o socket já aqui: os toques seguidos do atalho
@@ -85,59 +90,7 @@ fn claim(path: &Path) -> Result<UnixListener> {
     })
 }
 
-/// Argumentos que fazem uma nova execução pedir `action`.
-pub fn arguments(action: Action) -> String {
-    match action {
-        Action::SwitchTo(input) => format!("switch {}", input.0),
-        Action::SwitcherNext => "switcher-next".into(),
-        Action::SwitcherPrevious => "switcher-previous".into(),
-        Action::OpenSettings => "open".into(),
-    }
-}
-
-/// Sem palavras, como numa execução sem argumentos, o pedido é abrir a configuração.
-fn parse(request: &str) -> Result<Action> {
-    let words: Vec<&str> = request.split_whitespace().collect();
-    Ok(match words.as_slice() {
-        [] | ["open"] => Action::OpenSettings,
-        ["switch", input] => Action::SwitchTo(InputCode(
-            input
-                .parse()
-                .with_context(|| format!("entrada inválida: {input}\n{USAGE}"))?,
-        )),
-        ["switcher-next"] => Action::SwitcherNext,
-        ["switcher-previous"] => Action::SwitcherPrevious,
-        _ => bail!("{USAGE}"),
-    })
-}
-
 fn socket_path() -> Result<PathBuf> {
     let dir = dirs::runtime_dir().context("esta sessão não tem XDG_RUNTIME_DIR")?;
     Ok(dir.join("kvm-switch.sock"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_action_survives_the_command_line() {
-        // O atalho do GNOME roda `kvm-switch <arguments>`; se a volta falhar, o atalho não faz nada.
-        for action in [
-            Action::SwitchTo(InputCode(0x1b)),
-            Action::SwitcherNext,
-            Action::SwitcherPrevious,
-            Action::OpenSettings,
-        ] {
-            assert_eq!(parse(&arguments(action)).expect("pedido"), action);
-        }
-    }
-
-    #[test]
-    fn unknown_requests_are_refused() {
-        assert!(parse("switch").is_err());
-        assert!(parse("switch usb-c").is_err());
-        assert!(parse("switch 300").is_err());
-        assert!(parse("reboot").is_err());
-    }
 }

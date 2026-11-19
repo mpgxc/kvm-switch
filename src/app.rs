@@ -13,7 +13,7 @@ use crate::{
     adapters::{LOCAL_ICON, Platform},
     config,
     domain::{Config, Cycle, InputCode, Kvm, Outcome},
-    ports::{Action, Hotkeys},
+    ports::{Action, Hotkeys, StatusMenu},
     ui::{
         overlay::{self, Focus, HudView, SwitcherItem, SwitcherView},
         settings,
@@ -78,6 +78,7 @@ pub struct AppState {
     config_path: PathBuf,
     kvm: Kvm,
     hotkeys: Box<dyn Hotkeys>,
+    status_menu: Option<Box<dyn StatusMenu>>,
     switcher: Option<ActiveSwitcher>,
     hud: Option<AnyWindowHandle>,
 }
@@ -105,10 +106,12 @@ impl AppState {
             config_path,
             kvm: Kvm::new(platform.monitor, platform.peripherals),
             hotkeys: platform.hotkeys,
+            status_menu: platform.status_menu,
             switcher: None,
             hud: None,
         };
         state.rebind();
+        state.refresh_status_menu();
         state
     }
 
@@ -116,7 +119,15 @@ impl AppState {
         if let Err(error) = config::save(&self.config_path, &self.config) {
             self.status = format!("{error:#}");
         }
+        self.refresh_status_menu();
         cx.notify();
+    }
+
+    /// Mostra no menu do ícone na barra os destinos da configuração atual.
+    fn refresh_status_menu(&mut self) {
+        if let Some(menu) = &mut self.status_menu {
+            menu.show(&self.config);
+        }
     }
 
     /// Registra os atalhos da configuração atual.
@@ -188,6 +199,7 @@ impl AppState {
             Action::SwitcherPrevious => self.step_switcher(Cycle::back, cx),
             // Adiado: a janela lê este estado ao ser montada, e ele está em uso agora.
             Action::OpenSettings => cx.defer(settings::open),
+            Action::Quit => cx.quit(),
         }
     }
 

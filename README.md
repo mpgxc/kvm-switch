@@ -21,11 +21,11 @@ cargo run --release
 
 Não precisa do Xcode completo: os shaders são compilados quando o app abre.
 
-Fechar a janela não encerra o app, que precisa continuar rodando para ouvir os atalhos. Clicar no ícone do Dock abre a configuração de novo; ⌘Q encerra.
+Fechar a janela não encerra o app, que precisa continuar rodando para ouvir os atalhos. Clicar no ícone do Dock abre a configuração de novo; ⌘Q encerra. O ícone 🖥 na barra de menus tem o mesmo menu do Linux (veja [Usar](#usar)).
 
 ### Linux
 
-Ubuntu ou Debian com GNOME. O instalador traz as dependências, compila, instala em `~/.local/bin/kvm-switch`, cria o ícone "KVM Switch" no menu de aplicativos e abre a janela:
+Ubuntu ou Debian com GNOME. O instalador traz as dependências, compila, instala em `~/.local/bin/kvm-switch`, cria o ícone "KVM Switch" no menu de aplicativos, põe o ícone na barra superior (e o abre a cada login) e abre a janela:
 
 ```sh
 linux/install.sh --app
@@ -38,6 +38,8 @@ linux/install.sh --app
 | `libglib2.0-bin` | `gsettings`, que grava os atalhos no GNOME |
 | Rust e bibliotecas de desenvolvimento do xkbcommon, xcb, Wayland e fontconfig | Compilar o GPUI |
 
+Nenhum pacote a mais para o ícone na barra: ele fala com o GNOME por D-Bus. O GNOME só o mostra com a extensão de AppIndicator ativa, que o Ubuntu já traz (`ubuntu-appindicators@ubuntu.com`); em outras distribuições instale "AppIndicator and KStatusNotifierItem Support". O instalador avisa se ela não estiver ativa.
+
 O instalador remove os atalhos Super+Alt+1/2/3/0 da versão em script, se existirem: enquanto estão lá, o GNOME não entrega essas teclas ao app.
 
 No Linux o app não fica aberto esperando atalhos:
@@ -45,6 +47,7 @@ No Linux o app não fica aberto esperando atalhos:
 - Cada atalho é um atalho personalizado do GNOME que roda `kvm-switch` com o pedido. Eles continuam valendo com o app fechado e aparecem em Configurações → Teclado → Atalhos personalizados.
 - Uma troca direta roda sem abrir janela, em cerca de 0,25 s. O seletor e os avisos abrem o app na hora, o que leva cerca de 0,5 s.
 - O app encerra quando a última janela fecha (é assim que o GPUI funciona no Linux). Abrir "KVM Switch" de novo mostra a configuração; Ctrl+Q encerra.
+- O ícone na barra é um processo à parte e pequeno, `kvm-switch tray`, que nunca abre janela: cada item do menu roda `kvm-switch` com o pedido, como um atalho. O menu acompanha o `config.json` (confere a cada 2 s). Só um ícone por sessão; ele abre sozinho no login por `~/.config/autostart/kvm-switch-tray.desktop`.
 
 Pela linha de comando, com o app aberto ou fechado:
 
@@ -53,6 +56,8 @@ kvm-switch                    # abre a configuração
 kvm-switch switch 27          # vai para a entrada 27 (o valor de `input` no config.json)
 kvm-switch switcher-next      # abre o seletor ou avança nele
 kvm-switch switcher-previous
+kvm-switch quit               # encerra o app aberto, se houver
+kvm-switch tray               # põe o ícone na barra (só no Linux)
 ```
 
 ## Usar
@@ -67,6 +72,7 @@ kvm-switch switcher-previous
    - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux). Backspace remove, Esc cancela.
    - **Ir:** troca agora, sem atalho.
 3. **Atalho do seletor:** a combinação que abre o painel central, só com os destinos ativos. Sem nenhum ativo, ele não abre.
+4. **Ícone na barra** (🖥, na barra superior do GNOME ou na barra de menus do macOS): **Abrir configuração**, um **Ir para …** por destino ativo (o deste computador marcado "aqui") e **Encerrar**, que fecha o app e o ícone. No GNOME o clique simples abre o menu e o duplo abre a configuração.
 
 Se o sistema recusar um atalho (já em uso por outro app, por exemplo), o motivo aparece em vermelho na janela. No GNOME isso vale para os atalhos personalizados de outros programas; uma combinação que o próprio GNOME usa (Super+Alt+←, por exemplo) nem chega à janela para ser gravada.
 
@@ -101,23 +107,27 @@ flowchart LR
 | `src/ports.rs` | As interfaces que cada sistema precisa fornecer |
 | `src/adapters.rs` | Escolhe os adapters do sistema em que o app foi compilado |
 | `src/adapters/mccs.rs` | Lê as entradas na capability string do monitor, igual nos dois sistemas |
-| `src/adapters/macos.rs` | `Monitor` com `m1ddc` (trocar e ler) e DDPM (listar entradas); `Hotkeys` com `global-hotkey` |
+| `src/adapters/macos.rs` | `Monitor` com `m1ddc` (trocar e ler) e DDPM (listar entradas); `Hotkeys` com `global-hotkey`; `StatusMenu` com `tray-icon` |
 | `src/adapters/logi_bolt.rs` | macOS: `Peripherals` pelo receptor Logi Bolt, com `hidapitester` |
 | `src/adapters/linux.rs` | `Monitor` com `ddcutil` |
 | `src/adapters/linux/hidraw.rs` | `Peripherals` pelo receptor Logitech, direto no `hidraw` |
 | `src/adapters/linux/gnome.rs` | `Hotkeys` pelos atalhos personalizados do GNOME |
 | `src/adapters/linux/instance.rs` | Linha de comando e entrega do pedido ao app já aberto, por um socket |
+| `src/adapters/linux/tray.rs` | `kvm-switch tray`: o ícone na barra, num processo à parte e sem GPUI |
+| `src/request.rs` | Os pedidos em texto (`open`, `switch 27`, `quit`…), iguais na linha de comando, no socket e no menu do ícone |
+| `src/tray.rs` | O menu do ícone na barra, montado da configuração, igual nos dois sistemas |
 | `src/app.rs` | Estado do app: configuração, registro de atalhos, seletor, avisos |
 | `src/ui/` | Janela de configuração e painéis centrais |
 | `src/config.rs` | Leitura e gravação do JSON |
 
-As três portas:
+As portas:
 
 | Porta | O que o núcleo pede |
 |---|---|
 | `Monitor` | Listar as entradas, ler a entrada atual, trocar de entrada |
 | `Peripherals` | Mandar teclado e mouse para um canal |
 | `Hotkeys` | Registrar atalhos globais, entregar cada um como ação, dizer se os modificadores de um atalho ainda estão pressionados (ou que o sistema não deixa saber) |
+| `StatusMenu` | Mostrar o ícone na barra com o menu montado da configuração e entregar cada item clicado como ação. Opcional: o Linux não tem um no processo do app |
 
 Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kvm-switch.sh): `m1ddc set input` para o monitor e HID++ (`setCurrentHost` da feature `0x1814`) pelo `hidapitester` para os periféricos.
 
@@ -126,6 +136,7 @@ Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kv
 - **`Monitor`:** `ddcutil` no barramento I2C do monitor, com `--bus` e `--skip-ddc-checks`. O número do barramento fica em `~/.cache/kvm-switch/ddc-bus`; sem ele o `ddcutil` procura o monitor a cada chamada, o que leva cerca de 1,5 s.
 - **`Peripherals`:** os mesmos pacotes HID++ do macOS, escritos direto no `hidraw` do receptor, um slot por thread. Leva cerca de 0,07 s com os periféricos acordados e até 1 s se algum estiver em repouso. O `solaar config … change-host` faz o mesmo em cerca de 2,7 s por dispositivo, por isso o Solaar entra só com a regra udev.
 - **`Hotkeys`:** no Wayland um app não ouve o teclado fora da própria janela, então o `global-hotkey` não serve. O portal `GlobalShortcuts` do XDG existe no GNOME, mas pede uma confirmação do sistema a cada atalho novo e deixa a troca de tecla para as Configurações, o que não combina com gravar o atalho na janela do app. O adapter grava atalhos personalizados do GNOME que rodam `kvm-switch <pedido>`; a nova execução entrega o pedido ao app aberto por um socket em `$XDG_RUNTIME_DIR` e sai.
+- **`StatusMenu`:** nenhum dentro do app, que encerra com a última janela. O ícone é o `kvm-switch tray`, um StatusNotifierItem por D-Bus (`tray-icon` com `ksni`, sem GTK) que pede cada item rodando `kvm-switch <pedido>`.
 - **Modificadores do seletor:** o Wayland só mostra o teclado à janela em foco. O seletor recebe o foco ao abrir e é ele quem diz ao app quando os modificadores foram soltos. Se a janela não receber o foco, o seletor confirma após 1,2 s sem toques.
 
 Fora do GNOME o app funciona, mas não cria os atalhos: crie-os no seu ambiente gráfico apontando para os comandos acima.
@@ -150,7 +161,8 @@ Cobrem as regras da troca (com monitor e periféricos de mentira), os parsers da
 
 - O campo de nome só aceita digitar e apagar no fim: sem cursor, seleção ou acentos compostos.
 - O seletor não tem tecla de cancelar. Para desistir, avance até o destino marcado como "aqui" e solte.
-- O app não inicia sozinho no login e não tem ícone na barra de menus. No Linux isso não faz falta: os atalhos funcionam com ele fechado.
+- O app não inicia sozinho no login no macOS. No Linux só o ícone na barra abre no login; os atalhos funcionam com o app fechado.
+- No Linux o GPUI não aceita o token de ativação que o GNOME manda no clique do ícone: a janela aberta pelo menu pode não receber o foco.
 - No macOS a busca dos periféricos no receptor leva cerca de 2 s: a tela troca na hora e teclado e mouse seguem depois.
 - No Linux o seletor e os avisos são janelas comuns do Wayland: recebem o foco enquanto estão abertos e é o GNOME que escolhe onde ficam na tela.
 - No Linux os atalhos só são criados sozinhos no GNOME, e o monitor usado é o primeiro que responde por DDC/CI.

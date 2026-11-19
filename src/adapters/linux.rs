@@ -4,6 +4,7 @@
 mod gnome;
 mod hidraw;
 mod instance;
+mod tray;
 
 use std::{fs, path::PathBuf, sync::Mutex};
 
@@ -13,6 +14,7 @@ pub use self::{
     gnome::GnomeHotkeys,
     hidraw::LogiReceiver,
     instance::{first_action, listen},
+    tray::run as run_tray,
 };
 use super::{mccs::capability_inputs, run};
 use crate::{domain::InputCode, ports::Monitor};

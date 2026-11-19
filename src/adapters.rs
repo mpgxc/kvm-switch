@@ -1,8 +1,8 @@
 //! Adapters: as implementações das portas de `ports` para cada sistema.
 //!
-//! Para dar suporte a outro sistema, crie um módulo aqui com as três portas
-//! (`Monitor`, `Peripherals`, `Hotkeys`) e as funções `platform` e
-//! `first_action` para ele.
+//! Para dar suporte a outro sistema, crie um módulo aqui com as portas
+//! (`Monitor`, `Peripherals`, `Hotkeys` e, se o ícone na barra morar no app,
+//! `StatusMenu`) e as funções `platform` e `first_action` para ele.
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -17,12 +17,14 @@ use std::{process::Command, sync::Arc};
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 
-use crate::ports::{Action, Hotkeys, Monitor, Peripherals};
+use crate::ports::{Action, Hotkeys, Monitor, Peripherals, StatusMenu};
 
 pub struct Platform {
     pub monitor: Arc<dyn Monitor>,
     pub peripherals: Arc<dyn Peripherals>,
     pub hotkeys: Box<dyn Hotkeys>,
+    /// Ícone na barra no processo do app. No Linux ele roda à parte (`kvm-switch tray`).
+    pub status_menu: Option<Box<dyn StatusMenu>>,
 }
 
 /// Ícone do sistema em que o app roda, para o destino "este computador".
@@ -41,7 +43,7 @@ pub fn first_action() -> Result<Option<Action>> {
 }
 
 #[cfg(target_os = "linux")]
-pub use linux::first_action;
+pub use linux::{first_action, run_tray};
 
 /// Monitor e periféricos deste sistema, sem janelas nem atalhos.
 #[cfg(target_os = "macos")]
@@ -58,14 +60,27 @@ pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
     )
 }
 
-/// Monta os adapters deste sistema. Os atalhos pressionados saem por `actions`.
+/// Monta os adapters deste sistema. Os atalhos pressionados e os itens do ícone
+/// na barra saem por `actions`. No macOS precisa rodar com o app já iniciado.
 pub fn platform(actions: Sender<Action>) -> Result<Platform> {
     let (monitor, peripherals) = devices();
     Ok(Platform {
         monitor,
         peripherals,
+        status_menu: status_menu(actions.clone())?,
         hotkeys: hotkeys(actions)?,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn status_menu(actions: Sender<Action>) -> Result<Option<Box<dyn StatusMenu>>> {
+    Ok(Some(Box::new(macos::MacStatusMenu::new(actions)?)))
+}
+
+#[cfg(target_os = "linux")]
+fn status_menu(_: Sender<Action>) -> Result<Option<Box<dyn StatusMenu>>> {
+    // O ícone fica num processo à parte: o GPUI encerra o app com a última janela.
+    Ok(None)
 }
 
 #[cfg(target_os = "macos")]

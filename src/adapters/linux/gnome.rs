@@ -11,10 +11,10 @@ use std::env;
 
 use anyhow::{Context as _, Result, bail};
 
-use super::instance;
 use crate::{
     adapters::run,
     ports::{Action, Hotkeys},
+    request,
 };
 
 const SCHEMA: &str = "org.gnome.settings-daemon.plugins.media-keys";
@@ -76,7 +76,7 @@ impl GnomeHotkeys {
             let path = format!("{DIR}{OURS}{index}/");
             index += 1;
             set(&path, "name", &name(*action))?;
-            let command = format!("{} {}", self.program, instance::arguments(*action));
+            let command = format!("{} {}", self.program, request::arguments(*action));
             set(&path, "command", &command)?;
             set(&path, "binding", &accelerator)?;
             paths.push(path);
@@ -150,6 +150,7 @@ fn name(action: Action) -> String {
         Action::SwitcherNext => "KVM Switch: seletor".into(),
         Action::SwitcherPrevious => "KVM Switch: seletor, voltar".into(),
         Action::OpenSettings => "KVM Switch".into(),
+        Action::Quit => "KVM Switch: encerrar".into(),
     }
 }
 

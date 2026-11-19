@@ -1,5 +1,5 @@
 //! macOS: monitor por `m1ddc` (e DDPM para listar entradas) e atalhos globais
-//! pelo Carbon, via `global-hotkey`.
+//! pelo Carbon, via `global-hotkey`, e o ícone na barra de menus pelo `tray-icon`.
 
 use std::{
     collections::HashMap,
@@ -18,10 +18,13 @@ use global_hotkey::{
     hotkey::{HotKey, Modifiers},
 };
 
+use tray_icon::{TrayIcon, TrayIconBuilder, menu::MenuEvent};
+
 use super::{mccs::capability_inputs, run};
 use crate::{
-    domain::InputCode,
-    ports::{Action, Hotkeys, Monitor},
+    domain::{Config, InputCode},
+    ports::{Action, Hotkeys, Monitor, StatusMenu},
+    request, tray,
 };
 
 /// Linha de comando do Dell Display and Peripheral Manager.
@@ -195,6 +198,39 @@ mod tests {
         ] {
             let shortcut = format!("ctrl+alt+shift+cmd+{key}");
             assert!(parse(&shortcut).is_ok(), "{shortcut}");
+        }
+    }
+}
+
+/// Ícone na barra de menus (NSStatusItem). Criado na thread principal com o app
+/// já iniciado, dentro de `Application::run`, como o `tray-icon` exige.
+pub struct MacStatusMenu {
+    icon: TrayIcon,
+}
+
+impl MacStatusMenu {
+    pub fn new(actions: Sender<Action>) -> Result<Self> {
+        let icon = TrayIconBuilder::new()
+            .with_id("kvm-switch")
+            .with_tooltip("KVM Switch")
+            .with_icon(tray::icon()?)
+            .build()
+            .context("não consegui criar o ícone na barra de menus")?;
+        // O id de cada item é o pedido em texto (veja `tray::entries`).
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if let Ok(action) = request::parse(&event.id.0) {
+                actions.try_send(action).ok();
+            }
+        }));
+        Ok(Self { icon })
+    }
+}
+
+impl StatusMenu for MacStatusMenu {
+    fn show(&mut self, config: &Config) {
+        match tray::menu(config) {
+            Ok(menu) => self.icon.set_menu(Some(Box::new(menu))),
+            Err(error) => eprintln!("kvm-switch: {error:#}"),
         }
     }
 }

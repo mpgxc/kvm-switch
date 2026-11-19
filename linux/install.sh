@@ -2,7 +2,8 @@
 # Instala o kvm-switch no Linux (Ubuntu/Debian com GNOME), com tudo que ele usa.
 #
 #   ./install.sh         versão em script: atalhos Super+Alt+1/2/3/0 já ativos
-#   ./install.sh --app   app em Rust: compila, instala e abre; os atalhos são definidos nele
+#   ./install.sh --app   app em Rust: compila, instala, põe o ícone na barra e abre;
+#                        os atalhos são definidos nele
 #
 # Pode rodar de novo à vontade: só faz o que falta, e só pede a senha do sudo
 # quando há pacote de sistema para instalar. Rode como seu usuário, sem sudo.
@@ -112,6 +113,20 @@ Categories=Utility;
 StartupWMClass=kvm-switch
 EOF
 
+  # O ícone na barra é um processo à parte, aberto a cada login.
+  mkdir -p "$HOME/.config/autostart"
+  cat >"$HOME/.config/autostart/kvm-switch-tray.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=KVM Switch (ícone na barra)
+Comment=Ícone do KVM Switch na barra superior
+Exec="$HOME/.local/bin/kvm-switch" tray
+Icon=video-display
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+
   if $gnome; then
     # Os atalhos da versão em script ocupam as teclas: enquanto existirem, o GNOME
     # não as entrega ao app, nem para gravar um atalho novo.
@@ -135,6 +150,14 @@ EOF
   else
     echo "AVISO: este ambiente gráfico não é GNOME. O app não cria os atalhos sozinho:"
     echo "  crie-os no seu ambiente rodando $HOME/.local/bin/kvm-switch switch <entrada>"
+  fi
+
+  # O ícone na barra, se ainda não estiver lá.
+  pgrep -xf "$HOME/.local/bin/kvm-switch tray" >/dev/null ||
+    (setsid "$HOME/.local/bin/kvm-switch" tray >/dev/null 2>&1 &)
+  if $gnome && ! gnome-extensions info ubuntu-appindicators@ubuntu.com 2>/dev/null | grep -q 'State: ACTIVE'; then
+    echo "AVISO: o GNOME só mostra o ícone na barra com a extensão de AppIndicator ativa"
+    echo "  (ubuntu-appindicators@ubuntu.com no Ubuntu; \"AppIndicator and KStatusNotifierItem Support\" nas outras)."
   fi
 
   # Abre a janela de configuração (ou a traz de volta, se o app já estiver aberto).

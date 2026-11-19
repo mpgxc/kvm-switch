@@ -889,6 +889,7 @@ mod tests {
             monitor: Arc::new(NoHardware),
             peripherals: Arc::new(NoHardware),
             hotkeys: Box::new(RecordingHotkeys(bindings.clone())),
+            status_menu: None,
         };
         let state = cx.new(|_| AppState::new(platform, config_path.clone()));
         let view_state = state.clone();

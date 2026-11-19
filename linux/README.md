@@ -6,7 +6,7 @@ O app em Rust da raiz do repositório faz o mesmo com janela de configuração e
 
 ```sh
 linux/install.sh         # versão em script, descrita abaixo
-linux/install.sh --app   # app: compila, instala e abre (veja o README da raiz)
+linux/install.sh --app   # app: compila, instala, põe o ícone na barra e abre (veja o README da raiz)
 ```
 
 Os dois modos instalam o `ddcutil` e o `solaar`. O `--app` remove os atalhos da versão em script, porque duas coisas não podem ter a mesma tecla no GNOME.

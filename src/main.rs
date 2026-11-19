@@ -8,6 +8,8 @@ mod app;
 mod config;
 mod domain;
 mod ports;
+mod request;
+mod tray;
 mod ui;
 
 use std::process;
@@ -29,6 +31,15 @@ actions!(kvm_switch, [Quit]);
 const EXIT_REFUSED: i32 = 2;
 
 fn main() {
+    // O ícone na barra do Linux é um processo à parte, sem GPUI.
+    #[cfg(target_os = "linux")]
+    if std::env::args().skip(1).eq(["tray"]) {
+        if let Err(error) = adapters::run_tray() {
+            eprintln!("kvm-switch: {error:#}");
+            process::exit(EXIT_REFUSED);
+        }
+        return;
+    }
     let first = match adapters::first_action() {
         Ok(Some(action)) => action,
         // Já havia um app aberto e ele recebeu o pedido.
