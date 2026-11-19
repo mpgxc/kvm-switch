@@ -90,6 +90,9 @@ pub struct Config {
     pub switcher_hotkey: Option<String>,
 }
 
+/// Ícone de um destino até alguém escolher outro.
+pub const DEFAULT_ICON: &str = "🖥";
+
 impl Config {
     /// Cria um destino para cada entrada nova. Nunca remove nem altera os existentes.
     ///
@@ -107,11 +110,26 @@ impl Config {
                 self.targets.push(Target {
                     input,
                     name: input.label(),
-                    icon: "🖥".into(),
+                    icon: DEFAULT_ICON.into(),
                     channel,
                     hotkey: None,
                 });
             }
+        }
+    }
+
+    /// Registra a entrada deste computador, se ainda não houver uma, e dá ao
+    /// destino dela o ícone do sistema. Um ícone que o usuário já trocou fica.
+    pub fn adopt_local(&mut self, input: InputCode, icon: &str) {
+        if self.local_input.is_some() {
+            return;
+        }
+        self.local_input = Some(input);
+        let local = self.targets.iter_mut().find(|target| target.input == input);
+        if let Some(target) = local
+            && target.icon == DEFAULT_ICON
+        {
+            target.icon = icon.into();
         }
     }
 
@@ -367,6 +385,30 @@ mod tests {
                 None
             ]
         );
+    }
+
+    #[test]
+    fn this_computer_gets_the_system_icon_once() {
+        let mut config = Config::default();
+        config.merge_inputs(&[USB_C, DP]);
+        config.adopt_local(DP, "🐧");
+        assert_eq!(config.local_input, Some(DP));
+        assert_eq!(config.targets[1].icon, "🐧");
+        assert_eq!(config.targets[0].icon, DEFAULT_ICON);
+
+        // Com a entrada local já registrada, outra leitura do monitor não muda nada.
+        config.adopt_local(USB_C, "🐧");
+        assert_eq!(config.local_input, Some(DP));
+        assert_eq!(config.targets[0].icon, DEFAULT_ICON);
+    }
+
+    #[test]
+    fn an_icon_the_user_chose_is_kept() {
+        let mut config = Config::default();
+        config.merge_inputs(&[DP]);
+        config.targets[0].icon = "🎮".into();
+        config.adopt_local(DP, "🐧");
+        assert_eq!(config.targets[0].icon, "🎮");
     }
 
     #[test]

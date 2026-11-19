@@ -25,6 +25,14 @@ pub struct Platform {
     pub hotkeys: Box<dyn Hotkeys>,
 }
 
+/// Ícone do sistema em que o app roda, para o destino "este computador".
+#[cfg(target_os = "macos")]
+pub const LOCAL_ICON: &str = "🍎";
+
+/// Ícone do sistema em que o app roda, para o destino "este computador".
+#[cfg(target_os = "linux")]
+pub const LOCAL_ICON: &str = "🐧";
+
 /// O que esta execução do programa faz ao abrir. `None`: o pedido foi entregue
 /// a um app que já estava aberto e esta execução pode sair.
 #[cfg(target_os = "macos")]

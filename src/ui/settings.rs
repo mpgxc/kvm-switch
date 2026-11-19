@@ -2,9 +2,8 @@
 
 use gpui::{
     App, AppContext as _, Bounds, Context, Div, ElementId, Entity, FocusHandle, Global,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Render, SharedString, Stateful,
-    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb,
-    size,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Render, Stateful, TitlebarOptions,
+    Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb, size,
 };
 
 use super::theme;
@@ -269,13 +268,15 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                button(("icon", index), target.icon.clone())
-                    .w(px(44.))
-                    .px_0()
-                    .text_xl()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.edit_target(index, cx, |target| target.icon = next_icon(&target.icon))
-                    })),
+                button(
+                    ("icon", index),
+                    super::icon(target.icon.clone().into(), px(20.)),
+                )
+                .w(px(44.))
+                .px_0()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.edit_target(index, cx, |target| target.icon = next_icon(&target.icon))
+                })),
             )
             .child(
                 self.field(Field::Name(index), target.name.clone(), "nome", cx)
@@ -426,7 +427,7 @@ impl Render for SettingsView {
     }
 }
 
-fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(30.))
@@ -440,7 +441,7 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<
         .bg(rgb(theme::FIELD))
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::HOVER)))
-        .child(label.into())
+        .child(label)
 }
 
 fn next_icon(current: &str) -> String {
@@ -694,5 +695,14 @@ mod tests {
         assert_eq!(next_icon("🖥"), "💻");
         assert_eq!(next_icon("🎮"), "🖥");
         assert_eq!(next_icon("?"), "🖥");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_icon_on_offer_has_an_image() {
+        // Sem imagem o ícone cai no texto, que no Linux sai sem cor ou vira um quadrado.
+        for icon in ICONS {
+            assert!(crate::ui::icons::image(icon).is_some(), "{icon}");
+        }
     }
 }

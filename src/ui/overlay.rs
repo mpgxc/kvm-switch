@@ -52,7 +52,7 @@ impl Render for SwitcherView {
                 .when(index == self.selected, |card| {
                     card.bg(rgba(0xffffff26)).border_color(rgb(theme::ACCENT))
                 })
-                .child(div().text_size(px(52.)).child(item.icon.clone()))
+                .child(super::icon(item.icon.clone(), px(52.)))
                 .child(div().text_lg().child(item.name.clone()))
                 .child(div().text_sm().text_color(rgb(theme::MUTED)).child(port))
         });

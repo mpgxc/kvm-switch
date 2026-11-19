@@ -10,7 +10,7 @@ use anyhow::Result;
 use gpui::{AnyWindowHandle, Context, Modifiers, WindowHandle};
 
 use crate::{
-    adapters::Platform,
+    adapters::{LOCAL_ICON, Platform},
     config,
     domain::{Config, Cycle, InputCode, Kvm, Outcome},
     ports::{Action, Hotkeys},
@@ -151,11 +151,12 @@ impl AppState {
                     Ok(detected) => {
                         this.config.merge_inputs(&detected.inputs);
                         // A tela em que o app acabou de abrir é, quase sempre, a deste computador.
-                        if this.config.local_input.is_none() {
-                            // Logo após uma troca o monitor responde lixo: só vale entrada conhecida.
-                            this.config.local_input = detected
-                                .current
-                                .filter(|current| detected.inputs.contains(current));
+                        // Logo após uma troca o monitor responde lixo: só vale entrada conhecida.
+                        if let Some(current) = detected
+                            .current
+                            .filter(|current| detected.inputs.contains(current))
+                        {
+                            this.config.adopt_local(current, LOCAL_ICON);
                         }
                         let current = detected
                             .current
