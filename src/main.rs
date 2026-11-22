@@ -3,6 +3,8 @@
 //! `domain` tem as regras, `ports` as interfaces que cada sistema precisa
 //! fornecer, `adapters` as implementações por sistema e `ui` as janelas.
 
+#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
+
 mod adapters;
 mod app;
 mod config;
@@ -49,6 +51,10 @@ fn main() {
             process::exit(EXIT_REFUSED);
         }
     };
+    #[cfg(target_os = "windows")]
+    let start_in_background = adapters::starts_in_background();
+    #[cfg(not(target_os = "windows"))]
+    let start_in_background = false;
     // Uma troca pedida com o app fechado roda sem janela, sem esperar o GPUI
     // iniciar. O app só abre se sobrar um aviso para mostrar.
     let mut notice = None;
@@ -60,11 +66,11 @@ fn main() {
     }
     let app = Application::new();
     // No macOS fechar a janela não encerra o app, e clicar no ícone do Dock abre a
-    // configuração de novo. No Linux o GPUI encerra o app com a última janela, e
-    // abrir o programa outra vez mostra a configuração (veja `first_action`).
+    // configuração de novo. No Windows, o ícone na área de notificação mantém o app
+    // aberto quando a janela fecha. No Linux o GPUI encerra com a última janela.
     app.on_reopen(settings::open);
     app.run(move |cx| {
-        if let Err(error) = start(cx, first, notice) {
+        if let Err(error) = start(cx, first, notice, start_in_background) {
             eprintln!("kvm-switch: {error:#}");
             cx.quit();
         }
@@ -87,7 +93,12 @@ fn switch_without_window(input: InputCode) -> Option<String> {
     attempt().unwrap_or_else(|error| Some(format!("{error:#}")))
 }
 
-fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {
+fn start(
+    cx: &mut App,
+    first: Action,
+    notice: Option<String>,
+    start_in_background: bool,
+) -> Result<()> {
     let (sender, actions) = async_channel::unbounded();
     let platform = adapters::platform(sender)?;
     let config_path = config::default_path()?;
@@ -120,6 +131,8 @@ fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {
     state.update(cx, |state, cx| match notice {
         // A troca já rodou sem janela e sobrou este aviso.
         Some(message) => state.show_hud(message, cx),
+        // O atalho de inicialização do Windows deixa o app pronto no ícone da bandeja.
+        None if start_in_background => {}
         // Aberto pelo usuário, mostra a configuração; por um atalho, o atende.
         None => state.handle(first, cx),
     });

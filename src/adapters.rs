@@ -11,13 +11,20 @@ mod logi_bolt;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mccs;
+#[cfg(target_os = "windows")]
+mod windows;
 
-use std::{process::Command, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::Result;
 use async_channel::Sender;
 
 use crate::ports::{Action, Hotkeys, Monitor, Peripherals, StatusMenu};
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use anyhow::{Context as _, bail};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::process::Command;
 
 pub struct Platform {
     pub monitor: Arc<dyn Monitor>,
@@ -35,6 +42,10 @@ pub const LOCAL_ICON: &str = "🍎";
 #[cfg(target_os = "linux")]
 pub const LOCAL_ICON: &str = "🐧";
 
+/// Ícone do sistema em que o app roda, para o destino "este computador".
+#[cfg(target_os = "windows")]
+pub const LOCAL_ICON: &str = "🪟";
+
 /// O que esta execução do programa faz ao abrir. `None`: o pedido foi entregue
 /// a um app que já estava aberto e esta execução pode sair.
 #[cfg(target_os = "macos")]
@@ -44,6 +55,18 @@ pub fn first_action() -> Result<Option<Action>> {
 
 #[cfg(target_os = "linux")]
 pub use linux::{first_action, run_tray};
+
+/// O que esta execução do programa faz ao abrir no Windows.
+#[cfg(target_os = "windows")]
+pub fn first_action() -> Result<Option<Action>> {
+    Ok(Some(Action::OpenSettings))
+}
+
+/// Diz se o Windows deve iniciar o app somente com o ícone na área de notificação.
+#[cfg(target_os = "windows")]
+pub fn starts_in_background() -> bool {
+    std::env::args().skip(1).eq(["--background"])
+}
 
 /// Monitor e periféricos deste sistema, sem janelas nem atalhos.
 #[cfg(target_os = "macos")]
@@ -57,6 +80,15 @@ pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
     (
         Arc::new(linux::Ddcutil::new()),
         Arc::new(linux::LogiReceiver),
+    )
+}
+
+/// Monitor e periféricos deste sistema, sem janelas nem atalhos.
+#[cfg(target_os = "windows")]
+pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
+    (
+        Arc::new(windows::WindowsMonitor),
+        Arc::new(windows::LogiReceiver),
     )
 }
 
@@ -83,6 +115,11 @@ fn status_menu(_: Sender<Action>) -> Result<Option<Box<dyn StatusMenu>>> {
     Ok(None)
 }
 
+#[cfg(target_os = "windows")]
+fn status_menu(actions: Sender<Action>) -> Result<Option<Box<dyn StatusMenu>>> {
+    Ok(Some(Box::new(windows::WindowsStatusMenu::new(actions)?)))
+}
+
 #[cfg(target_os = "macos")]
 fn hotkeys(actions: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
     Ok(Box::new(macos::MacHotkeys::new(actions)?))
@@ -95,10 +132,16 @@ fn hotkeys(actions: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
     Ok(Box::new(linux::GnomeHotkeys::new()?))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(target_os = "windows")]
+fn hotkeys(actions: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
+    Ok(Box::new(windows::WindowsHotkeys::new(actions)?))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 compile_error!("kvm-switch ainda não tem adapter para este sistema: veja src/adapters.rs");
 
 /// Roda um programa externo e devolve o que ele escreveu na saída padrão.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run(program: &str, args: &[&str]) -> Result<String> {
     let mut command = Command::new(program);
     command.args(args);

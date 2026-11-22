@@ -138,6 +138,11 @@ pub struct SettingsView {
 impl SettingsView {
     fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        #[cfg(target_os = "windows")]
+        window.on_window_should_close(cx, |window, _| {
+            window.minimize_window();
+            false
+        });
         // A página tem layout fixo e não deve ser maximizada. O menu da janela, Super+↑ e
         // arrastar até o topo da tela pedem ao compositor sem passar pelo app, então a janela
         // volta ao tamanho de antes assim que chega maximizada.

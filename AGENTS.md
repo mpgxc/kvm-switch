@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Overview
-`kvm-switch` is a Rust desktop app for macOS and Linux. A hotkey, tray click or CLI request switches two things together: the monitor input (DDC/CI VCP `0x60`) and the Logitech Easy-Switch channel (HID++ 2.0 feature `0x1814` CHANGE_HOST over a Logi Bolt receiver `046D:C548`).
+`kvm-switch` is a Rust desktop app for macOS, Linux and Windows. A hotkey, tray click or CLI request switches two things together: the monitor input (DDC/CI VCP `0x60`) and the Logitech Easy-Switch channel (HID++ 2.0 feature `0x1814` CHANGE_HOST over a Logi Bolt receiver `046D:C548`).
 - The GPUI windows offer a settings view and a ⌘Tab-style "switcher" overlay.
 - `linux/` and `macos/` hold the **legacy shell/Python/Hammerspoon version**. It still works on its own and installs separately from the app.
 - All identifiers, comments, docs, user-facing strings and error messages are **Brazilian Portuguese**. Keep new code in Portuguese too; test function names are the only exception and stay in English.
@@ -39,6 +39,8 @@ Platform specifics:
   - `linux/gnome.rs`: GNOME custom keybindings via `gsettings`, which run `kvm-switch <request>`.
   - `linux/instance.rs`: single instance via a Unix socket at `$XDG_RUNTIME_DIR/kvm-switch.sock`.
   - `linux/tray.rs`: `kvm-switch tray` runs as a separate process without GPUI.
+- **Windows**
+  - `adapters/windows.rs`: monitor via `ddc-hi` and the Windows Monitor Configuration API; peripherals via `hidapi`'s native Windows backend; hotkeys via `global-hotkey`; tray via `tray-icon`.
 
 **Invariants (covered by domain tests; don't break them):**
 - The monitor switches first. Peripherals move only if the monitor succeeded.
@@ -53,6 +55,7 @@ Platform specifics:
 |---|---|
 | `src/` | Rust app (domain, ports, app, ui, request, tray, config) |
 | `src/adapters/` | Per-OS implementations: `macos.rs`, `logi_bolt.rs` (macOS), `linux.rs` + `linux/` (hidraw, gnome, instance, tray), `mccs.rs` (shared capability parser) |
+| `src/adapters/windows.rs` | Windows DDC/CI, Logitech HID++, global hotkeys and status icon |
 | `src/ui/` | GPUI views: `settings.rs`, `overlay.rs` |
 | `assets/icons/` | 128 px Noto Emoji PNGs named by codepoint, embedded with `include_bytes!` |
 | `linux/`, `macos/` | Legacy scripts and installers (see their READMEs) |
@@ -66,7 +69,8 @@ cargo run --release                          # macOS dev; needs: brew install m1
 macos/bundle.sh                              # macOS installer: target/release/KVM Switch.app + KVM-Switch-<version>.dmg (ad-hoc signed)
 linux/install.sh --app                       # Linux: apt deps + cargo install --root ~/.local + .desktop/autostart
 linux/deb.sh                                 # Linux package: target/release/kvm-switch_<version>_<arch>.deb (dpkg-deb, deps via dpkg-shlibdeps)
-./release.sh X.Y.Z                           # bump Cargo.toml/.lock, commit, tag vX.Y.Z, push → CI (.github/workflows/release.yml) builds .dmg + .deb, publishes a GitHub release
+windows/build-installer.ps1                  # Windows: target/release/KVM-Switch-Setup-<version>.exe (requires Inno Setup)
+./release.sh X.Y.Z                           # bump Cargo.toml/.lock, commit, tag vX.Y.Z, push → CI builds .dmg + .deb + Windows installer and publishes a GitHub release
 ```
 App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-previous | quit | tray]`. Exit code `2` (`EXIT_REFUSED`) means the request was refused or did not reach the running app.
 
@@ -104,7 +108,7 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-pre
 - `src/main.rs`: entry point. Handles the Linux `tray` branch, headless switching, `start()` (channel, `Platform`, `AppState`).
 - `src/domain.rs` and `src/ports.rs`: the core rules and contracts. Read these first.
 - `src/config.rs`: `<config_dir>/kvm-switch/config.json`, pretty JSON.
-  - Path: `~/Library/Application Support/…` on macOS, `~/.config/…` on Linux.
+  - Path: `~/Library/Application Support/…` on macOS, `~/.config/…` on Linux, `%APPDATA%\…` on Windows.
   - Atomic save: write `config.json.parcial`, then rename.
   - An invalid file is renamed to `config.json.invalido`; a missing file loads as the default config.
 - `src/request.rs`: CLI and IPC protocol. Keep `arguments` and `parse` symmetric.
@@ -112,15 +116,16 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-pre
 - `linux/70-logi-bolt.rules`: an optional udev `uaccess` rule for the receiver's hidraw device.
 
 ## Runtime/Tooling Preferences
-- Rust edition 2024, Cargo only. There is no `build.rs`, toolchain file or `.cargo/config`. The only CI is the tag-triggered release workflow; it runs no tests or clippy.
+- Rust edition 2024, Cargo only. There is no `build.rs`, toolchain file or `.cargo/config`. The only CI is the tag-triggered release workflow; it runs no clippy, and `cargo test` only in the Windows job.
 - Each OS builds natively; there is no cross-compiling. Code under `cfg(target_os)` compiles only on its own target, so a change to one adapter can't be checked from the other OS.
 - `gpui 0.2.2`:
   - The `runtime_shaders` feature means the full Xcode isn't needed.
   - Tests need `features = ["test-support"]`, which is already in dev-deps.
-- `tray-icon` uses `ksni` (D-Bus StatusNotifierItem); there is no GTK dependency.
+- `tray-icon` uses `ksni` (D-Bus StatusNotifierItem) on Linux, native backends on macOS/Windows; there is no GTK dependency.
 - External tools needed at runtime:
   - macOS: `m1ddc`, `hidapitester`, DDPM.
   - Linux: `ddcutil`, `gsettings`, and access to `/dev/i2c-*` and `/dev/hidraw*`.
+  - Windows: none; enable DDC/CI in the monitor menu and connect the Bolt receiver.
 - `vendor/xattr` works around gpui → zed-async-tar → xattr 0.2.3, which fails on Linux with libc ≥ 0.2.190.
   - The patch is a single `ENOATTR` constant change, marked `// kvm-switch:`.
   - Remove the patch once gpui drops the dependency.
@@ -140,4 +145,4 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-pre
   - `app.rs`, `ui/overlay.rs`, `adapters.rs` wiring, `linux/instance.rs`, `linux/tray.rs`.
   - Real hardware I/O.
   - All shell scripts (there is no shellcheck setup).
-- A full run needs both a Mac and a Linux machine. Before finishing, run `cargo test` and the clippy gate on the OS you changed.
+- A full run needs the supported OS and hardware. Before finishing, run `cargo test` and the clippy gate on the OS you changed.

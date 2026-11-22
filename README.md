@@ -6,7 +6,7 @@ App em Rust + GPUI que troca, por atalho, a entrada do monitor e o canal dos per
 - **Seletor estilo ⌘Tab:** um atalho abre um painel no centro da tela. Com os modificadores pressionados, cada toque na tecla avança (com Shift, volta). Soltar confirma e troca. Um toque rápido alterna para o destino vizinho.
 - **Configuração:** a janela lista as entradas que o monitor informa e deixa editar tudo. Cada mudança é salva na hora.
 
-Roda no macOS e no Linux (GNOME). As pastas [`macos/`](macos/README.md) e [`linux/`](linux/README.md) guardam a versão anterior, em script, que continua funcionando de forma independente, e os instaladores de cada sistema.
+Roda no macOS, Linux (GNOME) e Windows. As pastas [`macos/`](macos/README.md) e [`linux/`](linux/README.md) guardam a versão anterior, em script, que continua funcionando de forma independente, e os instaladores desses sistemas.
 
 ## Rodar
 
@@ -80,9 +80,31 @@ linux/deb.sh
 
 Gera `target/release/kvm-switch_<versão>_<arquitetura>.deb`, com as mesmas dependências de compilação do `install.sh --app`. Instale com `sudo apt install ./kvm-switch_*.deb`: o apt traz `ddcutil`, `libglib2.0-bin`, Vulkan e as bibliotecas do GPUI, e recomenda o `solaar`. O pacote põe o binário em `/usr/bin/kvm-switch`, o atalho no menu e o ícone na barra a cada login (`/etc/xdg/autostart`), para todos os usuários. Diferente do `install.sh`, não remove os atalhos da versão em script nem abre o app.
 
+### Windows
+
+Requer Windows 10 ou posterior, Rust e as ferramentas de compilação C++ do Visual Studio (workload **Desenvolvimento para desktop com C++**) para compilar. O app usa DDC/CI nativo do Windows e HIDAPI nativo para o receptor Bolt; não precisa instalar `ddcutil`, `hidapitester` ou outra ferramenta à parte. Deixe DDC/CI ligado no menu do monitor e conecte o receptor Bolt ao computador.
+
+```powershell
+cargo run --release
+```
+
+O executável fica em `target\release\kvm-switch.exe`. No Windows, fechar a janela pelo X a minimiza e mantém o app e os atalhos ativos; use **Abrir configuração** no menu do ícone da área de notificação para restaurá-la. Clique com o botão direito no ícone para escolher um destino ou encerrar. A tecla Windows é representada como `Super` ao gravar os atalhos.
+
+#### Instalador do Windows
+
+Instale o [Inno Setup](https://jrsoftware.org/isinfo.php) e gere o instalador pelo PowerShell, na raiz do projeto:
+
+```powershell
+.\windows\build-installer.ps1
+```
+
+O script compila a versão release e gera `target\release\KVM-Switch-Setup-<versão>.exe`. O instalador coloca o app em `%LOCALAPPDATA%\Programs\KVM Switch`, cria um atalho no menu Iniciar e oferece iniciar com o Windows (marcado por padrão), minimizado na área de notificação. Também é possível criar um atalho na área de trabalho. O menu do ícone permite abrir a configuração, trocar de destino ou encerrar o app.
+
+O workflow de release gera e publica o instalador junto com o executável avulso.
+
 ### Releases
 
-Cada tag `v*` enviada ao GitHub dispara `.github/workflows/release.yml`, que roda `macos/bundle.sh` (Apple Silicon) e `linux/deb.sh` (Ubuntu 22.04, amd64) e publica o `.dmg` e o `.deb` numa release. O `release.sh` faz a tag:
+Cada tag `v*` enviada ao GitHub dispara `.github/workflows/release.yml`, que gera o `.dmg` (macOS, Apple Silicon), o `.deb` (Ubuntu 22.04, amd64) e o executável `.exe` (Windows x64) e publica os três numa release. O `release.sh` faz a tag:
 
 ```sh
 ./release.sh 0.2.0   # põe 0.2.0 no Cargo.toml e no Cargo.lock, commita, cria a tag v0.2.0 e envia
@@ -96,14 +118,14 @@ Ele só roda na `main` limpa e igual à `origin/main`, e recusa uma tag que já 
 1. Na primeira abertura o app lê as entradas do monitor e cria um destino para cada uma, já com um canal Logitech: 1, 2 e 3 na ordem em que o monitor lista as entradas (USB-C, DP e HDMI num Dell P3225QE). **Detectar entradas** repete a leitura.
 2. Em cada linha:
    - **Ativo:** desmarcado, o destino sai do seletor: não aparece no painel e o ciclo pula ele. A linha fica apagada, mas continua editável, e o atalho próprio e o **Ir** dele seguem funcionando. Todo destino nasce ativo, inclusive os de um `config.json` antigo.
-   - **Ícone:** clique para passar ao próximo: 🖥 💻 🍎 🐧 🪟 🎮. O destino deste computador já nasce com o ícone do sistema (🍎 no macOS, 🐧 no Linux); os outros, com 🖥.
+   - **Ícone:** clique para passar ao próximo: 🖥 💻 🍎 🐧 🪟 🎮. O destino deste computador já nasce com o ícone do sistema (🍎 no macOS, 🐧 no Linux, 🪟 no Windows); os outros, com 🖥.
    - **Nome:** clique, digite, Enter.
    - **Onde o app roda:** marque a entrada em que este computador está ligado. O app usa isso para saber quando o destino pedido é o próprio computador.
    - **Canal Logitech:** canal Easy-Switch para onde teclado e mouse vão junto com a tela. Clique em 1, 2 ou 3 para trocar; `–` não mexe neles.
-   - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux). Backspace remove, Esc cancela.
+   - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux e tecla Windows no Windows). Backspace remove, Esc cancela.
    - **Ir:** troca agora, sem atalho.
 3. **Atalho do seletor:** a combinação que abre o painel central, só com os destinos ativos. Sem nenhum ativo, ele não abre.
-4. **Ícone na barra** (🖥, na barra superior do GNOME ou na barra de menus do macOS): **Abrir configuração**, um **Ir para …** por destino ativo (o deste computador marcado "aqui") e **Encerrar**, que fecha o app e o ícone. No GNOME o clique simples abre o menu e o duplo abre a configuração.
+4. **Ícone na barra** (🖥, na barra superior do GNOME, na barra de menus do macOS ou na área de notificação do Windows): **Abrir configuração**, um **Ir para …** por destino ativo (o deste computador marcado "aqui") e **Encerrar**, que fecha o app e o ícone. No GNOME o clique simples abre o menu e o duplo abre a configuração.
 
 Se o sistema recusar um atalho (já em uso por outro app, por exemplo), o motivo aparece em vermelho na janela. No GNOME isso vale para os atalhos personalizados de outros programas; uma combinação que o próprio GNOME usa (Super+Alt+←, por exemplo) nem chega à janela para ser gravada.
 
@@ -114,7 +136,7 @@ Se o sistema recusar um atalho (já em uso por outro app, por exemplo), o motivo
 
 ### Configuração em disco
 
-`~/Library/Application Support/kvm-switch/config.json` no macOS e `~/.config/kvm-switch/config.json` no Linux. `input` é o valor do código VCP 0x60 do monitor, em decimal (27 = USB-C, 15 = DP, 17 = HDMI num Dell P3225QE).
+`~/Library/Application Support/kvm-switch/config.json` no macOS, `~/.config/kvm-switch/config.json` no Linux e `%APPDATA%\kvm-switch\config.json` no Windows. `input` é o valor do código VCP 0x60 do monitor, em decimal (27 = USB-C, 15 = DP, 17 = HDMI num Dell P3225QE).
 
 Um arquivo inválido é renomeado para `config.json.invalido` em vez de ser sobrescrito.
 
@@ -129,7 +151,7 @@ flowchart LR
   domain --> ports{{ports: Monitor, Peripherals, Hotkeys}}
   ports --> mac[adapters/macos + logi_bolt]
   ports --> linux[adapters/linux]
-  ports -.-> outros[adapter de Windows, a fazer]
+  ports --> windows[adapters/windows]
 ```
 
 | Módulo | Papel |
@@ -137,7 +159,7 @@ flowchart LR
 | `src/domain.rs` | Regras sem sistema operacional: destinos, canais, ordem da troca, seleção do seletor |
 | `src/ports.rs` | As interfaces que cada sistema precisa fornecer |
 | `src/adapters.rs` | Escolhe os adapters do sistema em que o app foi compilado |
-| `src/adapters/mccs.rs` | Lê as entradas na capability string do monitor, igual nos dois sistemas |
+| `src/adapters/mccs.rs` | Lê as entradas na capability string do monitor |
 | `src/adapters/macos.rs` | `Monitor` com `m1ddc` (trocar e ler) e DDPM (listar entradas); `Hotkeys` com `global-hotkey`; `StatusMenu` com `tray-icon` |
 | `src/adapters/logi_bolt.rs` | macOS: `Peripherals` pelo receptor Logi Bolt, com `hidapitester` |
 | `src/adapters/linux.rs` | `Monitor` com `ddcutil` |
@@ -145,8 +167,9 @@ flowchart LR
 | `src/adapters/linux/gnome.rs` | `Hotkeys` pelos atalhos personalizados do GNOME |
 | `src/adapters/linux/instance.rs` | Linha de comando e entrega do pedido ao app já aberto, por um socket |
 | `src/adapters/linux/tray.rs` | `kvm-switch tray`: o ícone na barra, num processo à parte e sem GPUI |
+| `src/adapters/windows.rs` | `Monitor` por DDC/CI, `Peripherals` por HIDAPI, atalhos globais e ícone na área de notificação |
 | `src/request.rs` | Os pedidos em texto (`open`, `switch 27`, `quit`…), iguais na linha de comando, no socket e no menu do ícone |
-| `src/tray.rs` | O menu do ícone na barra, montado da configuração, igual nos dois sistemas |
+| `src/tray.rs` | O menu do ícone na barra, montado da configuração |
 | `src/app.rs` | Estado do app: configuração, registro de atalhos, seletor, avisos |
 | `src/ui/` | Janela de configuração e painéis centrais |
 | `src/config.rs` | Leitura e gravação do JSON |
@@ -160,7 +183,7 @@ As portas:
 | `Hotkeys` | Registrar atalhos globais, entregar cada um como ação, dizer se os modificadores de um atalho ainda estão pressionados (ou que o sistema não deixa saber) |
 | `StatusMenu` | Mostrar o ícone na barra com o menu montado da configuração e entregar cada item clicado como ação. Opcional: o Linux não tem um no processo do app |
 
-Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kvm-switch.sh): `m1ddc set input` para o monitor e HID++ (`setCurrentHost` da feature `0x1814`) pelo `hidapitester` para os periféricos.
+Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kvm-switch.sh): `m1ddc set input` para o monitor e HID++ (`setCurrentHost` da feature `0x1814`) pelo `hidapitester` para os periféricos. O Windows usa as APIs nativas DDC/CI e HID; não requer ferramentas externas.
 
 ### Como o Linux atende cada porta
 
@@ -171,6 +194,13 @@ Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kv
 - **Modificadores do seletor:** o Wayland só mostra o teclado à janela em foco. O seletor recebe o foco ao abrir e é ele quem diz ao app quando os modificadores foram soltos. Se a janela não receber o foco, o seletor confirma após 1,2 s sem toques.
 
 Fora do GNOME o app funciona, mas não cria os atalhos: crie-os no seu ambiente gráfico apontando para os comandos acima.
+
+### Como o Windows atende cada porta
+
+- **`Monitor`:** `ddc-hi` usa a Windows Monitor Configuration API para listar os modos de entrada anunciados pela capability string e ler ou alterar o VCP 0x60. É selecionado o primeiro monitor que responde a essa feature.
+- **`Peripherals`:** `hidapi` abre a interface HID++ (`FF00:0002`) de cada receptor Bolt e envia os mesmos comandos `getFeature(0x1814)` e `setCurrentHost` usados no macOS/Linux.
+- **`Hotkeys`:** `global-hotkey` registra as combinações no loop Win32 do app. A tecla Windows aparece como `Super` na configuração.
+- **`StatusMenu`:** `tray-icon` cria o ícone e o menu na área de notificação do Windows, no mesmo processo do app.
 
 O `Cargo.toml` aponta a `xattr` para `vendor/xattr`: o GPUI 0.2.2 depende da versão 0.2.3, que não compila no Linux com a `libc` atual. A cópia tem uma constante corrigida e mais nada.
 
@@ -186,7 +216,7 @@ O `Cargo.toml` aponta a `xattr` para `vendor/xattr`: o GPUI 0.2.2 depende da ver
 cargo test
 ```
 
-Cobrem as regras da troca (com monitor e periféricos de mentira), os parsers das saídas reais de `m1ddc`, DDPM, `hidapitester`, `ddcutil`, `gsettings` e do receptor Logitech, a conversão dos atalhos para o GNOME, a gravação da configuração e a edição de nome e atalhos na janela. Os testes de cada adapter só rodam no sistema dele.
+Cobrem as regras da troca (com monitor e periféricos de mentira), os parsers das saídas reais de `m1ddc`, DDPM, `hidapitester`, `ddcutil`, `gsettings` e dos pacotes do receptor Logitech, a conversão dos atalhos para o GNOME, a gravação da configuração e a edição de nome e atalhos na janela. Os testes de cada adapter só rodam no sistema dele.
 
 ## Limites conhecidos
 
@@ -197,3 +227,4 @@ Cobrem as regras da troca (com monitor e periféricos de mentira), os parsers da
 - No macOS a busca dos periféricos no receptor leva cerca de 2 s: a tela troca na hora e teclado e mouse seguem depois.
 - No Linux o seletor e os avisos são janelas comuns do Wayland: recebem o foco enquanto estão abertos e é o GNOME que escolhe onde ficam na tela.
 - No Linux os atalhos só são criados sozinhos no GNOME, e o monitor usado é o primeiro que responde por DDC/CI.
+- No Windows, o DDC/CI depende do suporte do monitor e do driver de vídeo; a busca escolhe o primeiro monitor que responde ao VCP 0x60.
