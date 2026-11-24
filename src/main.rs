@@ -19,7 +19,7 @@ use gpui::{App, AppContext as _, Application, KeyBinding, Menu, MenuItem, action
 
 use crate::{
     app::AppState,
-    domain::{InputCode, Kvm},
+    domain::{InputCode, Kvm, Side},
     ports::Action,
     ui::settings,
 };
@@ -52,8 +52,13 @@ fn main() {
     // Uma troca pedida com o app fechado roda sem janela, sem esperar o GPUI
     // iniciar. O app só abre se sobrar um aviso para mostrar.
     let mut notice = None;
-    if let Action::SwitchTo(input) = first {
-        notice = switch_without_window(input);
+    let headless = match first {
+        Action::SwitchTo(input) => Some(switch_without_window(input)),
+        Action::CrossEdge(side) => Some(cross_without_window(side)),
+        _ => None,
+    };
+    if let Some(left) = headless {
+        notice = left;
         if notice.is_none() {
             return;
         }
@@ -80,11 +85,26 @@ fn switch_without_window(input: InputCode) -> Option<String> {
         let Some(target) = config.target(input) else {
             return Ok(None);
         };
+        if !config.monitor_mode {
+            return Ok(Some(app::MONITOR_MODE_OFF.into()));
+        }
         let (monitor, peripherals) = adapters::devices();
         let outcome = Kvm::new(monitor, peripherals).switch(target, config.local_input);
         Ok(app::notice(&outcome, &target.name))
     };
     attempt().unwrap_or_else(|error| Some(format!("{error:#}")))
+}
+
+/// Manda teclado e mouse para o vizinho de `side` sem abrir janela. É o caminho
+/// da extensão do GNOME. Devolve o erro para mostrar, se houver.
+fn cross_without_window(side: Side) -> Option<String> {
+    let attempt = || -> Result<()> {
+        let config = config::load(&config::default_path()?)?;
+        let (monitor, peripherals) = adapters::devices();
+        Kvm::new(monitor, peripherals).cross(&config.edges, side)?;
+        Ok(())
+    };
+    attempt().err().map(|error| format!("{error:#}"))
 }
 
 fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {

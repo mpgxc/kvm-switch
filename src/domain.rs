@@ -89,13 +89,113 @@ fn active() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Configuração gravada. Campos ausentes num arquivo antigo assumem o valor de
+/// [`Config::default`], que deixa o modo Monitor compartilhado ligado e as
+/// bordas desligadas: quem atualiza o app não vê nada mudar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub targets: Vec<Target>,
     /// Entrada em que este computador está ligado.
     pub local_input: Option<InputCode>,
     pub switcher_hotkey: Option<String>,
+    /// Modo Monitor compartilhado: atalhos, seletor e "Ir" trocam tela e periféricos.
+    pub monitor_mode: bool,
+    /// Modo Bordas: o cursor na borda manda só teclado e mouse para o PC do lado.
+    pub edges: Edges,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            targets: Vec::new(),
+            local_input: None,
+            switcher_hotkey: None,
+            monitor_mode: true,
+            edges: Edges::default(),
+        }
+    }
+}
+
+/// Lado da tela onde fica um PC vizinho.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Side {
+    pub const ALL: [Side; 4] = [Side::Left, Side::Right, Side::Top, Side::Bottom];
+
+    /// Nome do lado, o mesmo usado no pedido `edge <lado>`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Side::Left => "esquerda",
+            Side::Right => "direita",
+            Side::Top => "cima",
+            Side::Bottom => "baixo",
+        }
+    }
+
+    pub fn from_word(word: &str) -> Option<Side> {
+        Side::ALL.into_iter().find(|side| side.word() == word)
+    }
+}
+
+/// O PC de um lado da tela. Sem canal, aquele lado não troca nada.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Neighbor {
+    pub channel: Option<Channel>,
+    /// Só para mostrar no quadro da configuração.
+    pub name: String,
+}
+
+/// Os vizinhos de cada lado. A borda só troca teclado e mouse, nunca a tela.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Edges {
+    pub enabled: bool,
+    pub left: Neighbor,
+    pub right: Neighbor,
+    pub top: Neighbor,
+    pub bottom: Neighbor,
+}
+
+impl Edges {
+    pub fn neighbor(&self, side: Side) -> &Neighbor {
+        match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+            Side::Top => &self.top,
+            Side::Bottom => &self.bottom,
+        }
+    }
+
+    pub fn neighbor_mut(&mut self, side: Side) -> &mut Neighbor {
+        match side {
+            Side::Left => &mut self.left,
+            Side::Right => &mut self.right,
+            Side::Top => &mut self.top,
+            Side::Bottom => &mut self.bottom,
+        }
+    }
+
+    /// Canal para onde atravessar por `side`. `None` com as bordas desligadas
+    /// ou sem vizinho naquele lado.
+    pub fn channel(&self, side: Side) -> Option<Channel> {
+        self.enabled.then(|| self.neighbor(side).channel).flatten()
+    }
+
+    /// Os lados que trocam alguma coisa agora.
+    pub fn active_sides(&self) -> Vec<Side> {
+        Side::ALL
+            .into_iter()
+            .filter(|&side| self.channel(side).is_some())
+            .collect()
+    }
 }
 
 /// Ícone de um destino até alguém escolher outro.
@@ -260,6 +360,92 @@ impl Kvm {
         self.monitor
             .set_input(input)
             .with_context(|| format!("o monitor não trocou para {label}"))
+    }
+
+    /// Manda teclado e mouse para o vizinho de `side`. Nunca mexe no monitor: o
+    /// PC do lado tem a própria tela. `Ok(false)` quando aquele lado não troca nada.
+    pub fn cross(&self, edges: &Edges, side: Side) -> Result<bool> {
+        let Some(channel) = edges.channel(side) else {
+            return Ok(false);
+        };
+        self.peripherals.switch_to(channel).with_context(|| {
+            format!(
+                "teclado e mouse não foram para o canal {}",
+                channel.number()
+            )
+        })?;
+        Ok(true)
+    }
+}
+
+/// Retângulo de uma tela no espaço global, com y crescendo para baixo (como no
+/// macOS e no GNOME).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Rect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// Distância da borda, em pontos, em que o cursor conta como encostado: ele para
+/// no último ponto dentro da tela, um antes do limite.
+const EDGE_TOLERANCE: f64 = 1.0;
+/// Perto dos cantos nada dispara, para não brigar com os cantos ativos do sistema.
+const CORNER: f64 = 8.0;
+
+/// O lado da área de trabalho em que o cursor está encostado, se estiver. Só
+/// contam as bordas externas: entre dois monitores do mesmo PC o cursor passa.
+pub fn edge_at(x: f64, y: f64, screens: &[Rect]) -> Option<Side> {
+    let screen = screens.iter().find(|screen| screen.contains(x, y))?;
+    let (left, top) = (screen.x, screen.y);
+    let (right, bottom) = (left + screen.width, top + screen.height);
+    let near_corner_x = x < left + CORNER || x >= right - CORNER;
+    let near_corner_y = y < top + CORNER || y >= bottom - CORNER;
+    // O ponto logo depois da borda: se outra tela o contém, a borda é interna.
+    let candidates = [
+        (Side::Left, x < left + EDGE_TOLERANCE, (left - EDGE_TOLERANCE, y), near_corner_y),
+        (Side::Right, x >= right - EDGE_TOLERANCE, (right + EDGE_TOLERANCE, y), near_corner_y),
+        (Side::Top, y < top + EDGE_TOLERANCE, (x, top - EDGE_TOLERANCE), near_corner_x),
+        (Side::Bottom, y >= bottom - EDGE_TOLERANCE, (x, bottom + EDGE_TOLERANCE), near_corner_x),
+    ];
+    candidates
+        .into_iter()
+        .find(|&(_, touching, (beyond_x, beyond_y), in_corner)| {
+            touching
+                && !in_corner
+                && !screens.iter().any(|other| other.contains(beyond_x, beyond_y))
+        })
+        .map(|(side, ..)| side)
+}
+
+/// Decide quando o cursor encostado numa borda atravessa. A borda só vale
+/// depois que o cursor saiu dela: quando teclado e mouse voltam, o cursor ainda
+/// está parado na borda por onde saiu e não pode mandá-los embora de novo.
+#[derive(Debug, Default)]
+pub struct EdgeWatch {
+    armed: bool,
+}
+
+impl EdgeWatch {
+    /// `at` é a borda em que o cursor está agora; `sides`, os lados com vizinho.
+    /// Devolve o lado por onde atravessar.
+    pub fn observe(&mut self, at: Option<Side>, sides: &[Side]) -> Option<Side> {
+        let Some(side) = at else {
+            self.armed = true;
+            return None;
+        };
+        if !self.armed || !sides.contains(&side) {
+            return None;
+        }
+        self.armed = false;
+        Some(side)
     }
 }
 
@@ -521,5 +707,153 @@ mod tests {
             Channel::Three
         );
         assert!(serde_json::from_str::<Channel>("4").is_err());
+    }
+
+    fn edges_with_right(channel: Channel) -> Edges {
+        let mut edges = Edges {
+            enabled: true,
+            ..Edges::default()
+        };
+        edges.right.channel = Some(channel);
+        edges
+    }
+
+    fn cross(fake: Fake, edges: &Edges, side: Side) -> (Result<bool>, Vec<String>) {
+        let fake = Arc::new(fake);
+        let crossed = Kvm::new(fake.clone(), fake.clone()).cross(edges, side);
+        let calls = fake.calls.lock().expect("lock").clone();
+        (crossed, calls)
+    }
+
+    #[test]
+    fn crossing_an_edge_moves_only_the_peripherals() {
+        // Um monitor que falharia prova que ele nem é consultado.
+        let fake = Fake {
+            monitor_fails: true,
+            ..Fake::default()
+        };
+        let (crossed, calls) = cross(fake, &edges_with_right(Channel::Two), Side::Right);
+        assert!(crossed.expect("travessia"));
+        assert_eq!(calls, ["canal 2"]);
+    }
+
+    #[test]
+    fn a_side_without_neighbor_or_disabled_edges_does_nothing() {
+        let edges = edges_with_right(Channel::Two);
+        let (crossed, calls) = cross(Fake::default(), &edges, Side::Left);
+        assert!(!crossed.expect("travessia"));
+        assert!(calls.is_empty(), "{calls:?}");
+
+        let disabled = Edges {
+            enabled: false,
+            ..edges
+        };
+        let (crossed, calls) = cross(Fake::default(), &disabled, Side::Right);
+        assert!(!crossed.expect("travessia"));
+        assert!(calls.is_empty(), "{calls:?}");
+        assert!(disabled.active_sides().is_empty());
+    }
+
+    #[test]
+    fn file_from_before_the_modes_keeps_the_monitor_and_leaves_edges_off() {
+        let config: Config = serde_json::from_str(
+            r#"{"targets": [], "local_input": 27, "switcher_hotkey": null}"#,
+        )
+        .expect("arquivo antigo");
+        assert!(config.monitor_mode);
+        assert_eq!(config.edges, Edges::default());
+        assert!(!config.edges.enabled);
+    }
+
+    #[test]
+    fn side_words_round_trip() {
+        for side in Side::ALL {
+            assert_eq!(Side::from_word(side.word()), Some(side));
+        }
+        assert_eq!(Side::from_word("left"), None);
+    }
+
+    const MAIN: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+    };
+
+    #[test]
+    fn the_cursor_stops_one_point_before_each_outer_edge() {
+        let screens = [MAIN];
+        assert_eq!(edge_at(0.0, 500.0, &screens), Some(Side::Left));
+        assert_eq!(edge_at(1919.0, 500.0, &screens), Some(Side::Right));
+        assert_eq!(edge_at(900.0, 0.0, &screens), Some(Side::Top));
+        assert_eq!(edge_at(900.0, 1079.0, &screens), Some(Side::Bottom));
+        assert_eq!(edge_at(900.0, 500.0, &screens), None);
+        assert_eq!(edge_at(1917.5, 500.0, &screens), None);
+    }
+
+    #[test]
+    fn corners_do_not_trigger() {
+        let screens = [MAIN];
+        assert_eq!(edge_at(1919.0, 0.0, &screens), None);
+        assert_eq!(edge_at(1919.0, 4.0, &screens), None);
+        assert_eq!(edge_at(0.0, 1079.0, &screens), None);
+        assert_eq!(edge_at(3.0, 0.0, &screens), None);
+    }
+
+    #[test]
+    fn the_edge_between_two_screens_of_this_pc_is_not_a_crossing() {
+        // Segundo monitor à direita, mais baixo e começando acima do principal.
+        let side_by_side = [
+            MAIN,
+            Rect {
+                x: 1920.0,
+                y: -200.0,
+                width: 2560.0,
+                height: 1440.0,
+            },
+        ];
+        assert_eq!(edge_at(1919.0, 500.0, &side_by_side), None);
+        assert_eq!(edge_at(1920.0, 500.0, &side_by_side), None);
+        assert_eq!(edge_at(4479.0, 500.0, &side_by_side), Some(Side::Right));
+        assert_eq!(edge_at(0.0, 500.0, &side_by_side), Some(Side::Left));
+        // Acima do principal não há tela; acima do segundo, a borda dele.
+        assert_eq!(edge_at(900.0, 0.0, &side_by_side), Some(Side::Top));
+        assert_eq!(edge_at(2500.0, -200.0, &side_by_side), Some(Side::Top));
+
+        let stacked = [
+            MAIN,
+            Rect {
+                x: 0.0,
+                y: -1080.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        ];
+        assert_eq!(edge_at(900.0, 0.0, &stacked), None);
+        assert_eq!(edge_at(900.0, -1080.0, &stacked), Some(Side::Top));
+        assert_eq!(edge_at(900.0, 1079.0, &stacked), Some(Side::Bottom));
+    }
+
+    #[test]
+    fn the_edge_only_fires_after_the_cursor_left_it() {
+        let sides = [Side::Right];
+        let mut watch = EdgeWatch::default();
+        // Ao abrir o app o cursor já está na borda: não atravessa.
+        assert_eq!(watch.observe(Some(Side::Right), &sides), None);
+        assert_eq!(watch.observe(None, &sides), None);
+        assert_eq!(watch.observe(Some(Side::Right), &sides), Some(Side::Right));
+        // Teclado e mouse voltaram e o cursor continua parado na borda.
+        assert_eq!(watch.observe(Some(Side::Right), &sides), None);
+        assert_eq!(watch.observe(Some(Side::Right), &sides), None);
+        assert_eq!(watch.observe(None, &sides), None);
+        assert_eq!(watch.observe(Some(Side::Right), &sides), Some(Side::Right));
+    }
+
+    #[test]
+    fn a_side_without_neighbor_never_fires() {
+        let mut watch = EdgeWatch::default();
+        watch.observe(None, &[Side::Right]);
+        assert_eq!(watch.observe(Some(Side::Bottom), &[Side::Right]), None);
+        assert_eq!(watch.observe(Some(Side::Right), &[Side::Right]), Some(Side::Right));
     }
 }

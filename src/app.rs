@@ -12,8 +12,8 @@ use gpui::{AnyWindowHandle, Context, Modifiers, WindowHandle};
 use crate::{
     adapters::{LOCAL_ICON, Platform},
     config,
-    domain::{Config, Cycle, InputCode, Kvm, Outcome},
-    ports::{Action, Hotkeys, StatusMenu},
+    domain::{Config, Cycle, InputCode, Kvm, Outcome, Side},
+    ports::{Action, EdgeSensor, Hotkeys, StatusMenu},
     ui::{
         overlay::{self, Focus, HudView, SwitcherItem, SwitcherView},
         settings,
@@ -26,6 +26,12 @@ const SWITCHER_POLL: Duration = Duration::from_millis(30);
 const SWITCHER_IDLE: Duration = Duration::from_millis(1200);
 /// Tempo que um aviso fica na tela.
 const HUD_DURATION: Duration = Duration::from_millis(1800);
+/// Depois de uma travessia pela borda, outra só depois deste tempo: o cursor que
+/// fica na borda enquanto os periféricos trocam não pode disparar de novo.
+const CROSS_PAUSE: Duration = Duration::from_secs(1);
+
+/// Aviso de quando algo pede a troca de tela com o modo Monitor compartilhado desligado.
+pub const MONITOR_MODE_OFF: &str = "O modo Monitor compartilhado está desligado";
 
 /// Quantas trocas estão em andamento. No Linux o GPUI encerra o app quando a
 /// última janela fecha, e sair no meio de uma troca deixaria o monitor numa
@@ -75,12 +81,19 @@ pub struct AppState {
     pub status: String,
     /// Atalhos que o sistema recusou no último registro.
     pub hotkey_errors: Vec<String>,
+    /// Por que as bordas ainda não funcionam neste sistema, se for o caso.
+    pub edges_notice: Option<String>,
     config_path: PathBuf,
     kvm: Kvm,
     hotkeys: Box<dyn Hotkeys>,
     status_menu: Option<Box<dyn StatusMenu>>,
+    edge_sensor: Box<dyn EdgeSensor>,
     switcher: Option<ActiveSwitcher>,
     hud: Option<AnyWindowHandle>,
+    /// Uma travessia pela borda está em andamento.
+    crossing: bool,
+    /// Quando a última travessia terminou.
+    crossed_at: Option<Instant>,
 }
 
 struct ActiveSwitcher {
@@ -103,15 +116,20 @@ impl AppState {
             config,
             status,
             hotkey_errors: Vec::new(),
+            edges_notice: None,
             config_path,
             kvm: Kvm::new(platform.monitor, platform.peripherals),
             hotkeys: platform.hotkeys,
             status_menu: platform.status_menu,
+            edge_sensor: platform.edge_sensor,
             switcher: None,
             hud: None,
+            crossing: false,
+            crossed_at: None,
         };
         state.rebind();
         state.refresh_status_menu();
+        state.refresh_edges();
         state
     }
 
@@ -120,7 +138,13 @@ impl AppState {
             self.status = format!("{error:#}");
         }
         self.refresh_status_menu();
+        self.refresh_edges();
         cx.notify();
+    }
+
+    /// Passa ao sensor os lados que trocam alguma coisa na configuração atual.
+    fn refresh_edges(&mut self) {
+        self.edges_notice = self.edge_sensor.watch(&self.config.edges.active_sides());
     }
 
     /// Mostra no menu do ícone na barra os destinos da configuração atual.
@@ -130,8 +154,13 @@ impl AppState {
         }
     }
 
-    /// Registra os atalhos da configuração atual.
+    /// Registra os atalhos da configuração atual. Com o modo Monitor
+    /// compartilhado desligado, nenhum.
     pub fn rebind(&mut self) {
+        if !self.config.monitor_mode {
+            self.hotkey_errors = self.hotkeys.rebind(&[]);
+            return;
+        }
         let mut bindings: Vec<(String, Action)> = self
             .config
             .targets
@@ -200,7 +229,43 @@ impl AppState {
             // Adiado: a janela lê este estado ao ser montada, e ele está em uso agora.
             Action::OpenSettings => cx.defer(settings::open),
             Action::Quit => cx.quit(),
+            Action::CrossEdge(side) => self.cross(side, cx),
+            // O app já está rodando: as bordas e os atalhos valem sem janela.
+            Action::Start => {}
         }
+    }
+
+    /// Manda teclado e mouse para o vizinho de `side`, uma travessia por vez.
+    fn cross(&mut self, side: Side, cx: &mut Context<Self>) {
+        let paused = self
+            .crossed_at
+            .is_some_and(|at| at.elapsed() < CROSS_PAUSE);
+        if self.crossing || paused || self.config.edges.channel(side).is_none() {
+            return;
+        }
+        self.crossing = true;
+        let (kvm, edges) = (self.kvm.clone(), self.config.edges.clone());
+        let (done, outcome) = async_channel::bounded(1);
+        let in_flight = InFlight::begin();
+        cx.background_executor()
+            .spawn(async move {
+                let _in_flight = in_flight;
+                done.try_send(kvm.cross(&edges, side)).ok();
+            })
+            .detach();
+        cx.spawn(async move |this, cx| {
+            let outcome = outcome.recv().await;
+            this.update(cx, |this, cx| {
+                this.crossing = false;
+                this.crossed_at = Some(Instant::now());
+                // Sem aviso quando dá certo: a travessia tem de parecer o cursor passando.
+                if let Ok(Err(error)) = outcome {
+                    this.show_hud(format!("{error:#}"), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn switch_to(&mut self, input: InputCode, cx: &mut Context<Self>) {
@@ -217,7 +282,12 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         // Cópia de propósito: a troca roda fora da thread da interface.
-        let Some(target) = self.config.target(input).cloned() else {
+        let target = self.config.target(input).cloned();
+        let Some(target) = target.filter(|_| self.config.monitor_mode) else {
+            // O aviso abre antes de o seletor fechar: no Linux o app encerra sem janelas.
+            if self.config.target(input).is_some() {
+                self.show_hud(MONITOR_MODE_OFF.into(), cx);
+            }
             if let Some(window) = finished {
                 overlay::close(window, cx);
             }
@@ -273,6 +343,9 @@ impl AppState {
         let Some(shortcut) = self.config.switcher_hotkey.clone() else {
             return;
         };
+        if !self.config.monitor_mode {
+            return;
+        }
         let local = self.config.local_input;
         // Só os destinos ativos, partindo do computador atual: o primeiro toque já cai no vizinho.
         let Some((targets, mut cycle)) = self.config.switcher() else {

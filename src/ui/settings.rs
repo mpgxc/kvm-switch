@@ -794,8 +794,8 @@ mod tests {
     use crate::{
         adapters::Platform,
         config,
-        domain::Config,
-        ports::{Action, Hotkeys, Monitor, Peripherals},
+        domain::{Config, Side},
+        ports::{Action, EdgeSensor, Hotkeys, Monitor, Peripherals},
     };
 
     const USB_C: InputCode = InputCode(0x1b);
@@ -836,6 +836,16 @@ mod tests {
 
         fn modifiers_held(&self, _: &str) -> Option<bool> {
             Some(false)
+        }
+    }
+
+    /// Guarda os lados que o app pediu para vigiar por último.
+    struct RecordingEdges(Arc<Mutex<Vec<Side>>>);
+
+    impl EdgeSensor for RecordingEdges {
+        fn watch(&mut self, sides: &[Side]) -> Option<String> {
+            *self.0.lock().expect("lock") = sides.to_vec();
+            None
         }
     }
 
@@ -881,6 +891,7 @@ mod tests {
             }],
             local_input: Some(USB_C),
             switcher_hotkey: Some(SWITCHER.into()),
+            ..Config::default()
         };
         config::save(&config_path, &config).expect("salvar configuração");
 
@@ -890,6 +901,7 @@ mod tests {
             peripherals: Arc::new(NoHardware),
             hotkeys: Box::new(RecordingHotkeys(bindings.clone())),
             status_menu: None,
+            edge_sensor: Box::new(RecordingEdges(Arc::default())),
         };
         let state = cx.new(|_| AppState::new(platform, config_path.clone()));
         let view_state = state.clone();

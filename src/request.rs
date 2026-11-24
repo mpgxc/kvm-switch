@@ -3,10 +3,14 @@
 
 use anyhow::{Context as _, Result, bail};
 
-use crate::{domain::InputCode, ports::Action};
+use crate::{
+    domain::{InputCode, Side},
+    ports::Action,
+};
 
-const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | switcher-next | switcher-previous | quit | tray]\n\
-    <entrada> é o valor do VCP 0x60 em decimal, como no config.json";
+const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | edge <lado> | switcher-next | switcher-previous | start | quit | tray]\n\
+    <entrada> é o valor do VCP 0x60 em decimal, como no config.json\n\
+    <lado> é esquerda, direita, cima ou baixo";
 
 /// O texto que pede `action`.
 pub fn arguments(action: Action) -> String {
@@ -16,6 +20,8 @@ pub fn arguments(action: Action) -> String {
         Action::SwitcherPrevious => "switcher-previous".into(),
         Action::OpenSettings => "open".into(),
         Action::Quit => "quit".into(),
+        Action::CrossEdge(side) => format!("edge {}", side.word()),
+        Action::Start => "start".into(),
     }
 }
 
@@ -32,6 +38,10 @@ pub fn parse(request: &str) -> Result<Action> {
         ["switcher-next"] => Action::SwitcherNext,
         ["switcher-previous"] => Action::SwitcherPrevious,
         ["quit"] => Action::Quit,
+        ["edge", side] => Action::CrossEdge(
+            Side::from_word(side).with_context(|| format!("lado inválido: {side}\n{USAGE}"))?,
+        ),
+        ["start"] => Action::Start,
         _ => bail!("{USAGE}"),
     })
 }
@@ -49,6 +59,9 @@ mod tests {
             Action::SwitcherPrevious,
             Action::OpenSettings,
             Action::Quit,
+            Action::CrossEdge(Side::Left),
+            Action::CrossEdge(Side::Bottom),
+            Action::Start,
         ] {
             assert_eq!(parse(&arguments(action)).expect("pedido"), action);
         }
@@ -61,5 +74,7 @@ mod tests {
         assert!(parse("switch 300").is_err());
         assert!(parse("reboot").is_err());
         assert!(parse("quit now").is_err());
+        assert!(parse("edge").is_err());
+        assert!(parse("edge right").is_err());
     }
 }

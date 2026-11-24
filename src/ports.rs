@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 
-use crate::domain::{Channel, Config, InputCode};
+use crate::domain::{Channel, Config, InputCode, Side};
 
 /// Controle do monitor por DDC/CI.
 pub trait Monitor: Send + Sync {
@@ -34,6 +34,20 @@ pub enum Action {
     OpenSettings,
     /// Encerrar o app.
     Quit,
+    /// O cursor atravessou a borda deste lado: teclado e mouse vão para o vizinho.
+    CrossEdge(Side),
+    /// Iniciar sem abrir janela. É o que o login do macOS pede, para as bordas
+    /// funcionarem desde o início da sessão.
+    Start,
+}
+
+/// Quem percebe o cursor encostando na borda da tela. Cada travessia é entregue
+/// como [`Action::CrossEdge`] pelo canal que o adapter recebe ao ser criado, ou,
+/// no GNOME, por uma execução de `kvm-switch edge <lado>`.
+pub trait EdgeSensor {
+    /// Passa a vigiar só `sides`; vazio, para de vigiar. Devolve um aviso para a
+    /// janela quando as bordas ainda não funcionam neste sistema.
+    fn watch(&mut self, sides: &[Side]) -> Option<String>;
 }
 
 /// Ícone na barra do sistema, no mesmo processo do app. Os itens clicados são

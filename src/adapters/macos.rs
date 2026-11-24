@@ -1,15 +1,19 @@
-//! macOS: monitor por `m1ddc` (e DDPM para listar entradas) e atalhos globais
-//! pelo Carbon, via `global-hotkey`, e o ícone na barra de menus pelo `tray-icon`.
+//! macOS: monitor por `m1ddc` (e DDPM para listar entradas), atalhos globais
+//! pelo Carbon, via `global-hotkey`, o ícone na barra de menus pelo `tray-icon`
+//! e a posição do cursor, para o modo Bordas, pelo Quartz.
 
 use std::{
     collections::HashMap,
     str::FromStr,
     sync::{Arc, Mutex},
+    thread,
+    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 use core_graphics::{
+    display::CGDisplay,
     event::{CGEvent, CGEventFlags},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
@@ -22,8 +26,8 @@ use tray_icon::{TrayIcon, TrayIconBuilder, menu::MenuEvent};
 
 use super::{mccs::capability_inputs, run};
 use crate::{
-    domain::{Config, InputCode},
-    ports::{Action, Hotkeys, Monitor, StatusMenu},
+    domain::{Config, EdgeWatch, InputCode, Rect, Side, edge_at},
+    ports::{Action, EdgeSensor, Hotkeys, Monitor, StatusMenu},
     request, tray,
 };
 
@@ -156,6 +160,72 @@ impl Hotkeys for MacHotkeys {
 
 fn parse(shortcut: &str) -> Result<HotKey> {
     Ok(HotKey::from_str(shortcut)?)
+}
+
+/// De quanto em quanto tempo o cursor é consultado com o modo Bordas ligado.
+const EDGE_POLL: Duration = Duration::from_millis(20);
+
+/// Vigia o cursor numa thread própria. Só consulta a posição, sem ouvir eventos,
+/// então não pede a permissão de Monitoramento de Entrada.
+pub struct MacEdges {
+    sides: Arc<Mutex<Vec<Side>>>,
+}
+
+impl MacEdges {
+    pub fn new(actions: Sender<Action>) -> Self {
+        let sides: Arc<Mutex<Vec<Side>>> = Arc::default();
+        let watched = sides.clone();
+        thread::spawn(move || {
+            let mut watch = EdgeWatch::default();
+            loop {
+                thread::sleep(EDGE_POLL);
+                let sides = watched.lock().expect("lock das bordas envenenado").clone();
+                if sides.is_empty() {
+                    // Ao religar, o cursor pode estar parado numa borda: começa desarmado.
+                    watch = EdgeWatch::default();
+                    continue;
+                }
+                let Some((x, y, screens)) = cursor_and_screens() else {
+                    continue;
+                };
+                if let Some(side) = watch.observe(edge_at(x, y, &screens), &sides) {
+                    // O receptor só some quando o app está encerrando.
+                    actions.try_send(Action::CrossEdge(side)).ok();
+                }
+            }
+        });
+        Self { sides }
+    }
+}
+
+impl EdgeSensor for MacEdges {
+    fn watch(&mut self, sides: &[Side]) -> Option<String> {
+        *self.sides.lock().expect("lock das bordas envenenado") = sides.to_vec();
+        None
+    }
+}
+
+/// Posição do cursor e retângulos das telas ativas, no espaço global do Quartz
+/// (origem no canto de cima da tela principal, y para baixo).
+fn cursor_and_screens() -> Option<(f64, f64, Vec<Rect>)> {
+    let at = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .and_then(CGEvent::new)
+        .ok()?
+        .location();
+    let screens = CGDisplay::active_displays()
+        .ok()?
+        .into_iter()
+        .map(|id| {
+            let bounds = CGDisplay::new(id).bounds();
+            Rect {
+                x: bounds.origin.x,
+                y: bounds.origin.y,
+                width: bounds.size.width,
+                height: bounds.size.height,
+            }
+        })
+        .collect();
+    Some((at.x, at.y, screens))
 }
 
 #[cfg(test)]

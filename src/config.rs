@@ -48,7 +48,7 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Channel, InputCode, Target};
+    use crate::domain::{Channel, Edges, InputCode, Neighbor, Target};
 
     fn temp_file(name: &str) -> PathBuf {
         let dir =
@@ -71,6 +71,15 @@ mod tests {
             }],
             local_input: Some(InputCode(0x1b)),
             switcher_hotkey: Some("cmd+alt+tab".into()),
+            monitor_mode: false,
+            edges: Edges {
+                enabled: true,
+                right: Neighbor {
+                    channel: Some(Channel::Three),
+                    name: "Notebook".into(),
+                },
+                ..Edges::default()
+            },
         };
         save(&path, &config).expect("salvar");
         assert_eq!(load(&path).expect("carregar"), config);

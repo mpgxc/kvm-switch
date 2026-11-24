@@ -1,8 +1,8 @@
 //! Adapters: as implementações das portas de `ports` para cada sistema.
 //!
 //! Para dar suporte a outro sistema, crie um módulo aqui com as portas
-//! (`Monitor`, `Peripherals`, `Hotkeys` e, se o ícone na barra morar no app,
-//! `StatusMenu`) e as funções `platform` e `first_action` para ele.
+//! (`Monitor`, `Peripherals`, `Hotkeys`, `EdgeSensor` e, se o ícone na barra
+//! morar no app, `StatusMenu`) e as funções `platform` e `first_action` para ele.
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -17,7 +17,7 @@ use std::{process::Command, sync::Arc};
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 
-use crate::ports::{Action, Hotkeys, Monitor, Peripherals, StatusMenu};
+use crate::ports::{Action, EdgeSensor, Hotkeys, Monitor, Peripherals, StatusMenu};
 
 pub struct Platform {
     pub monitor: Arc<dyn Monitor>,
@@ -25,6 +25,8 @@ pub struct Platform {
     pub hotkeys: Box<dyn Hotkeys>,
     /// Ícone na barra no processo do app. No Linux ele roda à parte (`kvm-switch tray`).
     pub status_menu: Option<Box<dyn StatusMenu>>,
+    /// Quem percebe o cursor na borda da tela, para o modo Bordas.
+    pub edge_sensor: Box<dyn EdgeSensor>,
 }
 
 /// Ícone do sistema em que o app roda, para o destino "este computador".
@@ -39,6 +41,10 @@ pub const LOCAL_ICON: &str = "🐧";
 /// a um app que já estava aberto e esta execução pode sair.
 #[cfg(target_os = "macos")]
 pub fn first_action() -> Result<Option<Action>> {
+    // O item de login abre o app com `start`, sem janela; o resto mostra a configuração.
+    if std::env::args().skip(1).eq(["start"]) {
+        return Ok(Some(Action::Start));
+    }
     Ok(Some(Action::OpenSettings))
 }
 
@@ -68,8 +74,20 @@ pub fn platform(actions: Sender<Action>) -> Result<Platform> {
         monitor,
         peripherals,
         status_menu: status_menu(actions.clone())?,
+        edge_sensor: edge_sensor(actions.clone()),
         hotkeys: hotkeys(actions)?,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn edge_sensor(actions: Sender<Action>) -> Box<dyn EdgeSensor> {
+    Box::new(macos::MacEdges::new(actions))
+}
+
+#[cfg(target_os = "linux")]
+fn edge_sensor(_: Sender<Action>) -> Box<dyn EdgeSensor> {
+    // No GNOME quem vê a borda é a extensão, que roda `kvm-switch edge <lado>`.
+    Box::new(linux::GnomeEdges::default())
 }
 
 #[cfg(target_os = "macos")]

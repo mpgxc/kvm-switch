@@ -29,13 +29,15 @@ fn item(action: Action, label: String) -> Entry {
     }
 }
 
-/// As linhas do menu: abrir a configuração, um item por destino ativo e encerrar.
+/// As linhas do menu: abrir a configuração, um item por destino ativo (só com o
+/// modo Monitor compartilhado ligado) e encerrar.
 pub fn entries(config: &Config) -> Vec<Entry> {
     let mut entries = vec![
         item(Action::OpenSettings, "Abrir configuração".into()),
         Entry::Separator,
     ];
-    for target in config.targets.iter().filter(|target| target.enabled) {
+    let targets = config.targets.iter().filter(|target| target.enabled);
+    for target in targets.filter(|_| config.monitor_mode) {
         let here = if Some(target.input) == config.local_input {
             " (aqui)"
         } else {
@@ -108,6 +110,7 @@ mod tests {
             ],
             local_input: Some(InputCode(15)),
             switcher_hotkey: None,
+            ..Config::default()
         }
     }
 
@@ -149,6 +152,23 @@ mod tests {
                 Action::SwitchTo(InputCode(27)),
                 Action::SwitchTo(InputCode(15)),
                 Action::Quit
+            ]
+        );
+    }
+
+    #[test]
+    fn without_the_monitor_mode_there_is_nowhere_to_go() {
+        let config = Config {
+            monitor_mode: false,
+            ..config()
+        };
+        assert_eq!(
+            entries(&config),
+            [
+                item(Action::OpenSettings, "Abrir configuração".into()),
+                Entry::Separator,
+                Entry::Separator,
+                item(Action::Quit, "Encerrar".into()),
             ]
         );
     }
