@@ -110,6 +110,9 @@ fn cross_without_window(side: Side) -> Option<String> {
 fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {
     let (sender, actions) = async_channel::unbounded();
     let platform = adapters::platform(sender)?;
+    // Melhor esforço: sem o item de login o app só deixa de abrir sozinho no próximo login.
+    #[cfg(target_os = "macos")]
+    adapters::register_login_item().ok();
     let config_path = config::default_path()?;
     let state = cx.new(|_| AppState::new(platform, config_path));
     cx.set_global(settings::Shared::new(state.clone()));

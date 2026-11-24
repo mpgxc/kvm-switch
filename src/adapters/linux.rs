@@ -1,6 +1,8 @@
-//! Linux: monitor por `ddcutil`, periféricos pelo `hidraw` do receptor Logitech
-//! e atalhos globais pelos atalhos personalizados do GNOME.
+//! Linux: monitor por `ddcutil`, periféricos pelo `hidraw` do receptor Logitech,
+//! atalhos globais pelos atalhos personalizados do GNOME e bordas por uma
+//! extensão do GNOME Shell.
 
+mod edges;
 mod gnome;
 mod hidraw;
 mod instance;
@@ -11,6 +13,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 use anyhow::{Context as _, Result, bail};
 
 pub use self::{
+    edges::GnomeEdges,
     gnome::GnomeHotkeys,
     hidraw::LogiReceiver,
     instance::{first_action, listen},

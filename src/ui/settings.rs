@@ -1,4 +1,4 @@
-//! Janela de configuração: destinos, nomes, ícones, canais e atalhos.
+//! Janela de configuração: destinos, nomes, ícones, canais, atalhos, modos e bordas.
 
 use gpui::{
     App, AppContext as _, Bounds, BoxShadow, Context, CursorStyle, Decorations, Div, ElementId,
@@ -11,14 +11,14 @@ use gpui::{
 use super::theme;
 use crate::{
     app::AppState,
-    domain::{Channel, InputCode, Target},
+    domain::{Channel, Config, Edges, InputCode, Neighbor, Side, Target},
 };
 
 /// Ícones oferecidos para um destino; cada clique passa para o próximo.
 const ICONS: [&str; 6] = ["🖥", "💻", "🍎", "🐧", "🪟", "🎮"];
 
 const WINDOW_WIDTH: f32 = 1010.;
-const WINDOW_HEIGHT: f32 = 460.;
+const WINDOW_HEIGHT: f32 = 700.;
 /// Altura dos campos e dos botões.
 const CONTROL_HEIGHT: f32 = 30.;
 const ACTIVE_WIDTH: f32 = 40.;
@@ -31,6 +31,9 @@ const PORT_WIDTH: f32 = 70.;
 const LOCAL_WIDTH: f32 = 170.;
 const CHANNEL_WIDTH: f32 = 30.;
 const HOTKEY_WIDTH: f32 = 170.;
+/// Casa do quadro das bordas: o botão do canal e o nome do vizinho lado a lado.
+const EDGE_CELL_WIDTH: f32 = 190.;
+const EDGE_NAME_WIDTH: f32 = 130.;
 /// Moldura desenhada pelo próprio app quando o sistema não desenha uma (GNOME no Wayland).
 const TITLE_BAR_HEIGHT: f32 = 40.;
 const WINDOW_BUTTON_SIZE: f32 = 24.;
@@ -110,6 +113,7 @@ pub fn open(cx: &mut App) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
     Name(usize),
+    EdgeName(Side),
     Hotkey(usize),
     SwitcherHotkey,
 }
@@ -118,13 +122,14 @@ impl Field {
     fn id(self) -> ElementId {
         match self {
             Field::Name(index) => ("name", index).into(),
+            Field::EdgeName(side) => ("edge-name", side as usize).into(),
             Field::Hotkey(index) => ("hotkey", index).into(),
             Field::SwitcherHotkey => "switcher-hotkey".into(),
         }
     }
 
     fn records_hotkey(self) -> bool {
-        !matches!(self, Field::Name(_))
+        matches!(self, Field::Hotkey(_) | Field::SwitcherHotkey)
     }
 }
 
@@ -194,6 +199,25 @@ impl SettingsView {
         });
     }
 
+    /// Muda a configuração fora dos destinos (modos e bordas) e salva na hora.
+    fn edit_config(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Config)) {
+        self.state.update(cx, |state, cx| {
+            edit(&mut state.config);
+            state.save(cx);
+        });
+    }
+
+    /// Muda o texto do campo de nome em edição: de um destino ou de um vizinho.
+    fn edit_name(&mut self, field: Field, cx: &mut Context<Self>, edit: impl FnOnce(&mut String)) {
+        match field {
+            Field::Name(index) => self.edit_target(index, cx, |target| edit(&mut target.name)),
+            Field::EdgeName(side) => {
+                self.edit_config(cx, |config| edit(&mut config.edges.neighbor_mut(side).name));
+            }
+            Field::Hotkey(_) | Field::SwitcherHotkey => {}
+        }
+    }
+
     fn set_hotkey(&mut self, field: Field, shortcut: Option<String>, cx: &mut Context<Self>) {
         match field {
             Field::Hotkey(index) => self.edit_target(index, cx, |target| target.hotkey = shortcut),
@@ -201,7 +225,7 @@ impl SettingsView {
                 state.config.switcher_hotkey = shortcut;
                 state.save(cx);
             }),
-            Field::Name(_) => {}
+            Field::Name(_) | Field::EdgeName(_) => {}
         }
         self.stop_editing(cx);
     }
@@ -214,19 +238,19 @@ impl SettingsView {
         let modifiers = keystroke.modifiers;
         let chord = modifiers.control || modifiers.alt || modifiers.platform;
 
-        if let Field::Name(index) = field {
+        if !field.records_hotkey() {
             // shortcut: sem cursor, seleção nem composição de acentos; trocar por um
             // campo de texto completo quando os nomes precisarem de mais que digitar e apagar.
             match keystroke.key.as_str() {
                 "enter" | "escape" | "tab" => self.stop_editing(cx),
-                "backspace" => self.edit_target(index, cx, |target| {
-                    target.name.pop();
+                "backspace" => self.edit_name(field, cx, |name| {
+                    name.pop();
                 }),
                 _ => {
                     if let Some(text) = &keystroke.key_char
                         && !chord
                     {
-                        self.edit_target(index, cx, |target| target.name.push_str(text));
+                        self.edit_name(field, cx, |name| name.push_str(text));
                     }
                 }
             }
@@ -254,7 +278,7 @@ impl SettingsView {
     ) -> Stateful<Div> {
         let editing = self.editing == Some(field);
         let (label, muted) = match (editing, field) {
-            (true, Field::Name(_)) => (format!("{text}▏"), false),
+            (true, Field::Name(_) | Field::EdgeName(_)) => (format!("{text}▏"), false),
             (true, _) => ("pressione o atalho…".to_string(), true),
             (false, _) if text.is_empty() => (placeholder.to_string(), true),
             (false, _) => (text, false),
@@ -285,6 +309,7 @@ impl SettingsView {
         index: usize,
         target: &Target,
         local: Option<InputCode>,
+        monitor_mode: bool,
         cx: &Context<Self>,
     ) -> Div {
         let input = target.input;
@@ -317,8 +342,9 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_3()
-            // Fora do seletor a linha fica apagada, mas continua editável.
-            .when(!enabled, |rest| rest.opacity(INACTIVE_OPACITY))
+            // Fora do seletor, ou com o monitor compartilhado desligado, a linha fica apagada,
+            // mas continua editável.
+            .when(!enabled || !monitor_mode, |rest| rest.opacity(INACTIVE_OPACITY))
             .child(
                 button(
                     ("icon", index),
@@ -363,12 +389,17 @@ impl SettingsView {
                 )
                 .w(px(HOTKEY_WIDTH)),
             )
-            .child(
+            .child(if monitor_mode {
                 button(("go", index), "Ir").on_click(cx.listener(move |this, _, _, cx| {
                     this.state
                         .update(cx, |state, cx| state.switch_to(input, cx));
-                })),
-            );
+                }))
+            } else {
+                // Sem o monitor compartilhado não há troca de tela: o botão fica inerte.
+                button(("go", index), "Ir")
+                    .cursor_default()
+                    .text_color(rgb(theme::MUTED))
+            });
 
         div()
             .flex()
@@ -382,6 +413,87 @@ impl SettingsView {
                     })),
             )
             .child(rest)
+    }
+
+    /// Casa de um lado no quadro das bordas: o canal (cada clique passa para o próximo) e o
+    /// nome do PC vizinho, que só serve para o usuário se achar.
+    fn edge_cell(&self, side: Side, neighbor: &Neighbor, cx: &Context<Self>) -> Div {
+        let label = neighbor
+            .channel
+            .map_or_else(|| "–".to_string(), |channel| channel.number().to_string());
+        div()
+            .w(px(EDGE_CELL_WIDTH))
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                button(("edge-channel", side as usize), label)
+                    .debug_selector(move || format!("EdgeChannel({side:?})"))
+                    .w(px(CHANNEL_WIDTH))
+                    .when(neighbor.channel.is_some(), |button| {
+                        button.bg(rgb(theme::ACCENT))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.edit_config(cx, |config| {
+                            let neighbor = config.edges.neighbor_mut(side);
+                            neighbor.channel = next_channel(neighbor.channel);
+                        });
+                    })),
+            )
+            .child(
+                self.field(Field::EdgeName(side), neighbor.name.clone(), "nome do PC", cx)
+                    .w(px(EDGE_NAME_WIDTH)),
+            )
+    }
+
+    /// Quadro 3×3 com este PC no meio e os vizinhos em volta, na posição em que estão na mesa.
+    /// Com as bordas desligadas fica apagado, mas continua editável.
+    fn edges_board(&self, edges: &Edges, cx: &Context<Self>) -> Div {
+        let empty = || div().w(px(EDGE_CELL_WIDTH));
+        // No macOS a barra de menus e o Dock ficam colados nessas bordas: encostar nelas para
+        // usá-los já atravessa.
+        let warning = |side: Side, text: &'static str| {
+            let shown = cfg!(target_os = "macos") && edges.neighbor(side).channel.is_some();
+            empty()
+                .text_xs()
+                .text_color(rgb(theme::MUTED))
+                .when(shown, |cell| cell.child(text))
+        };
+        let line = |cells: [Div; 3]| div().flex().items_center().gap_3().children(cells);
+        let this_pc = div()
+            .w(px(EDGE_CELL_WIDTH))
+            .h(px(CONTROL_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(theme::ACCENT))
+            .child("Este PC");
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when(!edges.enabled, |board| board.opacity(INACTIVE_OPACITY))
+            .child(line([
+                empty(),
+                self.edge_cell(Side::Top, &edges.top, cx),
+                warning(
+                    Side::Top,
+                    "⚠ Encostar na barra de menus já leva teclado e mouse.",
+                ),
+            ]))
+            .child(line([
+                self.edge_cell(Side::Left, &edges.left, cx),
+                this_pc,
+                self.edge_cell(Side::Right, &edges.right, cx),
+            ]))
+            .child(line([
+                empty(),
+                self.edge_cell(Side::Bottom, &edges.bottom, cx),
+                warning(Side::Bottom, "⚠ Encostar no Dock já leva teclado e mouse."),
+            ]))
     }
 
     /// Barra de título para quando o app desenha a moldura: arrasta a janela, abre o menu da
@@ -434,7 +546,9 @@ impl Render for SettingsView {
             .targets
             .iter()
             .enumerate()
-            .map(|(index, target)| self.row(index, target, config.local_input, cx))
+            .map(|(index, target)| {
+                self.row(index, target, config.local_input, config.monitor_mode, cx)
+            })
             .collect();
         let errors: Vec<Div> = state
             .hotkey_errors
@@ -530,6 +644,55 @@ impl Render for SettingsView {
                     )),
             )
             .children(errors)
+            .child(
+                div()
+                    .mt_4()
+                    .flex()
+                    .gap_6()
+                    .child(
+                        div()
+                            .flex_1()
+                            // Sem isso o texto longo não quebra e empurra o quadro para fora.
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(div().text_xl().child("Modos"))
+                            .child(
+                                toggle(
+                                    "MonitorMode",
+                                    "Monitor compartilhado (atalhos e seletor)",
+                                    config.monitor_mode,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.state.update(cx, |state, cx| {
+                                        state.config.monitor_mode = !state.config.monitor_mode;
+                                        state.rebind();
+                                        state.save(cx);
+                                    });
+                                })),
+                            )
+                            .child(
+                                toggle(
+                                    "EdgesMode",
+                                    "Bordas (só teclado e mouse)",
+                                    config.edges.enabled,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.edit_config(cx, |config| {
+                                        config.edges.enabled = !config.edges.enabled;
+                                    });
+                                })),
+                            )
+                            .child(div().text_sm().text_color(rgb(theme::MUTED)).child(
+                                "Bordas: levar o mouse até um lado com canal manda teclado e mouse para o PC daquele lado. A tela fica.",
+                            ))
+                            .when_some(state.edges_notice.clone(), |column, notice| {
+                                column.child(div().text_color(rgb(theme::ERROR)).child(notice))
+                            }),
+                    )
+                    .child(self.edges_board(&config.edges, cx).flex_none()),
+            )
             .child(
                 div()
                     .text_sm()
@@ -714,6 +877,18 @@ fn checkbox(id: impl Into<ElementId>, checked: bool) -> Stateful<Div> {
         )
 }
 
+/// Caixa de marcar com o rótulo do lado; clicar no rótulo também marca.
+fn toggle(id: &'static str, label: &'static str, checked: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.to_string())
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .child(checkbox(id, checked))
+        .child(label)
+}
+
 fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
     div()
         .id(id)
@@ -729,6 +904,16 @@ fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::HOVER)))
         .child(label)
+}
+
+/// Próximo canal de um vizinho: – → 1 → 2 → 3 → –.
+fn next_channel(current: Option<Channel>) -> Option<Channel> {
+    match current {
+        None => Some(Channel::One),
+        Some(Channel::One) => Some(Channel::Two),
+        Some(Channel::Two) => Some(Channel::Three),
+        Some(Channel::Three) => None,
+    }
 }
 
 fn next_icon(current: &str) -> String {
@@ -794,7 +979,6 @@ mod tests {
     use crate::{
         adapters::Platform,
         config,
-        domain::{Config, Side},
         ports::{Action, EdgeSensor, Hotkeys, Monitor, Peripherals},
     };
 
@@ -852,6 +1036,8 @@ mod tests {
     struct Opened<'a> {
         state: Entity<AppState>,
         bindings: Bindings,
+        /// Os lados que o sensor de bordas vigia agora.
+        watched: Arc<Mutex<Vec<Side>>>,
         config_path: PathBuf,
         cx: &'a mut VisualTestContext,
     }
@@ -872,6 +1058,10 @@ mod tests {
 
         fn bindings(&self) -> Vec<(String, Action)> {
             self.bindings.lock().expect("lock").clone()
+        }
+
+        fn watched(&self) -> Vec<Side> {
+            self.watched.lock().expect("lock").clone()
         }
     }
 
@@ -896,12 +1086,13 @@ mod tests {
         config::save(&config_path, &config).expect("salvar configuração");
 
         let bindings = Bindings::default();
+        let watched = Arc::<Mutex<Vec<Side>>>::default();
         let platform = Platform {
             monitor: Arc::new(NoHardware),
             peripherals: Arc::new(NoHardware),
             hotkeys: Box::new(RecordingHotkeys(bindings.clone())),
             status_menu: None,
-            edge_sensor: Box::new(RecordingEdges(Arc::default())),
+            edge_sensor: Box::new(RecordingEdges(watched.clone())),
         };
         let state = cx.new(|_| AppState::new(platform, config_path.clone()));
         let view_state = state.clone();
@@ -909,6 +1100,7 @@ mod tests {
         Opened {
             state,
             bindings,
+            watched,
             config_path,
             cx,
         }
@@ -1014,6 +1206,65 @@ mod tests {
             None
         );
         assert_eq!(window.bindings(), []);
+    }
+
+    #[gpui::test]
+    fn turning_monitor_mode_off_releases_every_hotkey(cx: &mut TestAppContext) {
+        let mut window = open("monitor-mode", cx);
+        assert_eq!(window.bindings(), switcher_bindings());
+
+        window.click("MonitorMode");
+        assert!(!window.config().monitor_mode);
+        assert!(
+            !config::load(&window.config_path)
+                .expect("carregar")
+                .monitor_mode
+        );
+        assert_eq!(window.bindings(), []);
+
+        window.click("MonitorMode");
+        assert!(window.config().monitor_mode);
+        assert_eq!(window.bindings(), switcher_bindings());
+    }
+
+    #[gpui::test]
+    fn an_edge_channel_is_watched_only_while_edges_are_on(cx: &mut TestAppContext) {
+        let mut window = open("edges", cx);
+        window.click("EdgesMode");
+        window.click("EdgeChannel(Right)");
+        assert_eq!(window.config().edges.right.channel, Some(Channel::One));
+        let saved = config::load(&window.config_path).expect("carregar");
+        assert!(saved.edges.enabled);
+        assert_eq!(saved.edges.right.channel, Some(Channel::One));
+        assert_eq!(window.watched(), [Side::Right]);
+
+        window.click("EdgesMode");
+        assert!(!window.config().edges.enabled);
+        assert_eq!(window.watched(), []);
+    }
+
+    #[gpui::test]
+    fn typing_edits_the_neighbor_name_and_saves_it(cx: &mut TestAppContext) {
+        let mut window = open("edge-name", cx);
+        window.click("EdgeName(Left)");
+        window.cx.simulate_keystrokes("shift-p c enter z");
+        assert_eq!(window.config().edges.left.name, "Pc");
+        let saved = config::load(&window.config_path).expect("carregar");
+        assert_eq!(saved.edges.left.name, "Pc");
+    }
+
+    #[gpui::test]
+    fn an_edge_channel_cycles_back_to_none(cx: &mut TestAppContext) {
+        let mut window = open("edge-cycle", cx);
+        for expected in [
+            Some(Channel::One),
+            Some(Channel::Two),
+            Some(Channel::Three),
+            None,
+        ] {
+            window.click("EdgeChannel(Top)");
+            assert_eq!(window.config().edges.top.channel, expected);
+        }
     }
 
     #[test]

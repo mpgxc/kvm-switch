@@ -1,6 +1,12 @@
 //! Periféricos Logitech pelo receptor Bolt, falando HID++ 2.0 com o `hidapitester`.
 //! São os mesmos comandos de `macos/kvm-switch.sh`.
 
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+    thread,
+};
+
 use anyhow::{Result, bail};
 
 use super::run;
@@ -11,41 +17,100 @@ const RECEIVER: &str = "046D:C548";
 /// Quantos periféricos um receptor Bolt pareia.
 const SLOTS: u8 = 6;
 
-pub struct LogiBolt;
+/// Slot do receptor → índice da feature CHANGE_HOST no dispositivo pareado nele.
+type Known = BTreeMap<u8, u8>;
+
+#[derive(Default)]
+pub struct LogiBolt {
+    /// Os slots que já responderam, com o índice de CHANGE_HOST de cada um. Com
+    /// eles a troca manda só `setCurrentHost` (~10 ms por slot) em vez de perguntar
+    /// aos 6 slots (~0,15 s cada, ~0,9 s se o dispositivo está acordando).
+    /// Compartilhado com a busca em segundo plano, que só acrescenta.
+    // shortcut: um slot repareado com outro modelo de dispositivo guarda o índice
+    // antigo até o app reabrir; refazer a busca se isso passar a acontecer.
+    known: Arc<Mutex<Known>>,
+}
 
 impl Peripherals for LogiBolt {
     fn switch_to(&self, channel: Channel) -> Result<()> {
-        let mut moved = 0;
-        for slot in 1..=SLOTS {
-            // IRoot.getFeature(0x1814 CHANGE_HOST): o índice da feature muda de um
-            // dispositivo para outro, então é perguntado a cada troca.
-            // A 1ª leitura espera o dispositivo acordar; a 2ª cobre uma resposta
-            // atrasada de outro slot que chegue na frente.
-            let probe = hidpp(
-                &format!("{slot},0x00,0x0e,0x18,0x14"),
-                &[
-                    "--timeout",
-                    "1000",
-                    "--read-input",
-                    "--timeout",
-                    "100",
-                    "--read-input",
-                ],
-            )?;
-            if let Some(index) = change_host_index(&probe, slot) {
-                // setCurrentHost(host)
-                hidpp(
-                    &format!("{slot},0x{index:02x},0x1e,{}", channel.host_index()),
-                    &[],
-                )?;
-                moved += 1;
-            }
+        let mut known = self
+            .known
+            .lock()
+            .expect("lock dos slots envenenado")
+            .clone();
+        // A primeira troca pergunta a todos os slots, como antes do cache.
+        let searched_all = known.is_empty();
+        if searched_all {
+            known = search(1..=SLOTS)?;
+            self.known
+                .lock()
+                .expect("lock dos slots envenenado")
+                .extend(&known);
         }
-        if moved == 0 {
+        if known.is_empty() {
             bail!("nenhum periférico Logitech neste receptor Bolt");
+        }
+        for (slot, index) in &known {
+            // setCurrentHost(host)
+            hidpp(
+                &format!("{slot},0x{index:02x},0x1e,{}", channel.host_index()),
+                &[],
+            )?;
+        }
+        if !searched_all {
+            self.search_in_background();
         }
         Ok(())
     }
+}
+
+impl LogiBolt {
+    /// Os slots fora do cache (dispositivo desligado ou em repouso) entram nele para
+    /// a próxima troca, sem atrasar quem chamou. Só lê: não troca nada de canal.
+    pub fn search_in_background(&self) {
+        let missing: Vec<u8> = {
+            let known = self.known.lock().expect("lock dos slots envenenado");
+            (1..=SLOTS)
+                .filter(|slot| !known.contains_key(slot))
+                .collect()
+        };
+        let shared = Arc::clone(&self.known);
+        thread::spawn(move || {
+            // Melhor esforço: uma falha aqui só deixa a próxima troca sem esses slots.
+            if let Ok(found) = search(missing) {
+                shared
+                    .lock()
+                    .expect("lock dos slots envenenado")
+                    .extend(found);
+            }
+        });
+    }
+}
+
+/// Pergunta a cada slot o índice de CHANGE_HOST e devolve os que responderam.
+fn search(slots: impl IntoIterator<Item = u8>) -> Result<Known> {
+    let mut found = Known::new();
+    for slot in slots {
+        // IRoot.getFeature(0x1814 CHANGE_HOST): o índice da feature muda de um
+        // dispositivo para outro.
+        // A 1ª leitura espera o dispositivo acordar; a 2ª cobre uma resposta
+        // atrasada de outro slot que chegue na frente.
+        let probe = hidpp(
+            &format!("{slot},0x00,0x0e,0x18,0x14"),
+            &[
+                "--timeout",
+                "1000",
+                "--read-input",
+                "--timeout",
+                "100",
+                "--read-input",
+            ],
+        )?;
+        if let Some(index) = change_host_index(&probe, slot) {
+            found.insert(slot, index);
+        }
+    }
+    Ok(found)
 }
 
 /// Envia um relatório longo HID++ (0x11, software id 0xe) ao receptor.

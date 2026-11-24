@@ -1,7 +1,9 @@
 # Repository Guidelines
 
 ## Project Overview
-`kvm-switch` is a Rust desktop app for macOS and Linux. A hotkey, tray click or CLI request switches two things together: the monitor input (DDC/CI VCP `0x60`) and the Logitech Easy-Switch channel (HID++ 2.0 feature `0x1814` CHANGE_HOST over a Logi Bolt receiver `046D:C548`).
+`kvm-switch` is a Rust desktop app for macOS and Linux. It has two independent modes, both toggled in the settings window:
+- **Monitor compartilhado** (`Config.monitor_mode`, on by default): a hotkey, tray click or CLI request switches two things together: the monitor input (DDC/CI VCP `0x60`) and the Logitech Easy-Switch channel (HID++ 2.0 feature `0x1814` CHANGE_HOST over a Logi Bolt receiver `046D:C548`).
+- **Bordas** (`Config.edges`, off by default): PCs side by side, each with its own screen and each running the app. When the cursor touches an outer edge of the desktop on a side that has a neighbor, only the keyboard and mouse go to that neighbor's channel. No network: the other PC's app sends them back the same way.
 - The GPUI windows offer a settings view and a ⌘Tab-style "switcher" overlay.
 - `linux/` and `macos/` hold the **legacy shell/Python/Hammerspoon version**. It still works on its own and installs separately from the app.
 - All identifiers, comments, docs, user-facing strings and error messages are **Brazilian Portuguese**. Keep new code in Portuguese too; test function names are the only exception and stay in English.
@@ -9,12 +11,13 @@
 ## Architecture & Data Flow
 The code follows hexagonal (ports and adapters) layering, described in the `src/main.rs` module doc:
 - `domain.rs` holds the OS-free rules:
-  - Types: `InputCode(u8)` (serde-transparent decimal VCP value), `Channel {One,Two,Three}` (stored as 1–3, `host_index()` is 0-based), `Target`, `Config`, `Cycle`, `Outcome`.
-  - Use case: `Kvm { Arc<dyn Monitor>, Arc<dyn Peripherals> }` with `detect()` and `switch()`.
-- `ports.rs` defines the traits each OS must provide: `Monitor`, `Peripherals` (both `Send + Sync`), `Hotkeys` and `StatusMenu`, plus `enum Action`.
+  - Types: `InputCode(u8)` (serde-transparent decimal VCP value), `Channel {One,Two,Three}` (stored as 1–3, `host_index()` is 0-based), `Target`, `Config`, `Cycle`, `Outcome`, `Side` (`word()` = `esquerda|direita|cima|baixo`), `Neighbor { channel, name }`, `Edges`.
+  - Edge geometry, OS-free and tested: `Rect`, `edge_at(x, y, screens)` (outer edges only, 8 px corners ignored) and `EdgeWatch` (an edge fires only after the cursor has left it, so devices coming back don't bounce away).
+  - Use case: `Kvm { Arc<dyn Monitor>, Arc<dyn Peripherals> }` with `detect()`, `switch()` and `cross(&Edges, Side)`.
+- `ports.rs` defines the traits each OS must provide: `Monitor`, `Peripherals` (both `Send + Sync`), `Hotkeys`, `StatusMenu` and `EdgeSensor`, plus `enum Action` (including `CrossEdge(Side)` and `Start`, the window-less start the macOS login item uses).
 - `adapters.rs` does the wiring:
-  - `Platform { monitor, peripherals, hotkeys, status_menu }`.
-  - Each OS has its own `#[cfg(target_os)]` versions of `first_action`, `devices`, `platform` and `hotkeys`. Any other OS hits `compile_error!`.
+  - `Platform { monitor, peripherals, hotkeys, status_menu, edge_sensor }`.
+  - Each OS has its own `#[cfg(target_os)]` versions of `first_action`, `devices`, `platform`, `hotkeys` and `edge_sensor`. Any other OS hits `compile_error!`.
   - The `run(program, args)` helper runs external commands.
 - `app.rs`: `AppState` is a GPUI entity. Its `handle(Action)` dispatches every action.
 - `ui/`: `settings.rs` (settings view) and `overlay.rs` (switcher and HUD).
@@ -26,23 +29,27 @@ Flow:
 3. `Kvm::switch` runs on `background_executor`.
 4. The outcome comes back as a HUD message or a status line.
 
-When `switch` is requested while the app is closed, it runs headless (`main.rs::switch_without_window`). GPUI starts only if a notice is left to show.
+When `switch` or `edge` is requested while the app is closed, it runs headless (`main.rs::switch_without_window` / `cross_without_window`). GPUI starts only if a notice is left to show.
 
 Platform specifics:
 - **macOS**
-  - `adapters/macos.rs`: monitor via `m1ddc`; inputs listed via DDPM (`/Applications/DDPM/DDPM`); hotkeys via `global-hotkey`; tray via `tray-icon`, created on the main thread.
-  - `adapters/logi_bolt.rs`: peripherals via `hidapitester`.
+  - `adapters/macos.rs`: monitor via `m1ddc`; inputs listed via DDPM (`/Applications/DDPM/DDPM`); hotkeys via `global-hotkey`; tray via `tray-icon`, created on the main thread; `MacEdges` polls the cursor and display bounds through Quartz every 20 ms (no permission needed) and feeds `EdgeWatch`.
+  - `adapters/logi_bolt.rs`: peripherals via `hidapitester`. `LogiBolt` caches slot → CHANGE_HOST index (the cache only grows); later switches send only `setCurrentHost` (~20 ms) and a background thread queries the uncached slots. The app warms the cache at start.
+  - Login item: `register_login_item` writes a LaunchAgent (`io.github.mpgxc.kvm-switch`) running `open -g -a <app> --args start`, only when the app runs from `/Applications` or `~/Applications`.
   - `run()` prepends Homebrew to `PATH`, because Dock-launched apps don't inherit the shell `PATH`.
 - **Linux**
   - `adapters/linux.rs`: `ddcutil` with the bus cached in `~/.cache/kvm-switch/ddc-bus`.
   - `linux/hidraw.rs`: raw HID++ to `/dev/hidrawN`, one thread per slot, `libc::poll`.
   - `linux/gnome.rs`: GNOME custom keybindings via `gsettings`, which run `kvm-switch <request>`.
+  - Edges: a GNOME Shell extension (GNOME 45+, uuid `kvm-switch@mpgxc.github.io`, source in `linux/gnome-extension/`) puts pressure barriers on the outer edges and runs `kvm-switch edge <lado>`. `linux/edges.rs` (`GnomeEdges`) only enables it (`gnome-extensions enable`, falling back to `org.gnome.shell enabled-extensions` when the shell hasn't loaded it yet) and reports whether it is ACTIVE. Installed by `install.sh --app` (`~/.local/share/gnome-shell/extensions/`) and `deb.sh` (`/usr/share/gnome-shell/extensions/`); on Wayland it loads only after logging out and in.
   - `linux/instance.rs`: single instance via a Unix socket at `$XDG_RUNTIME_DIR/kvm-switch.sock`.
   - `linux/tray.rs`: `kvm-switch tray` runs as a separate process without GPUI.
 
 **Invariants (covered by domain tests; don't break them):**
 - The monitor switches first. Peripherals move only if the monitor succeeded.
 - When the target is the local input, peripherals are untouched. The result is `AlreadyHere` if the monitor is already on that input.
+- An edge crossing never touches the monitor (`Kvm::cross` calls only `Peripherals`).
+- With `monitor_mode` off: no hotkeys are registered, the switcher doesn't open, `SwitchTo` only shows the `MONITOR_MODE_OFF` notice, and the tray has no "Ir para …" items.
 - `Config::merge_inputs` never removes or edits existing targets.
 - On Linux, GPUI quits with its last window:
   - Open the new HUD or switcher before closing the old one.
@@ -52,10 +59,11 @@ Platform specifics:
 | Path | Purpose |
 |---|---|
 | `src/` | Rust app (domain, ports, app, ui, request, tray, config) |
-| `src/adapters/` | Per-OS implementations: `macos.rs`, `logi_bolt.rs` (macOS), `linux.rs` + `linux/` (hidraw, gnome, instance, tray), `mccs.rs` (shared capability parser) |
+| `src/adapters/` | Per-OS implementations: `macos.rs`, `logi_bolt.rs` (macOS), `linux.rs` + `linux/` (hidraw, gnome, edges, instance, tray), `mccs.rs` (shared capability parser) |
 | `src/ui/` | GPUI views: `settings.rs`, `overlay.rs` |
 | `assets/icons/` | 128 px Noto Emoji PNGs named by codepoint, embedded with `include_bytes!` |
 | `linux/`, `macos/` | Legacy scripts and installers (see their READMEs) |
+| `linux/gnome-extension/` | GNOME Shell extension (ESM, 45+) for the edges; shipped by `install.sh --app` and `deb.sh` |
 | `vendor/xattr/` | Patched xattr 0.2.3; don't edit (see below) |
 
 ## Development Commands
@@ -68,7 +76,7 @@ linux/install.sh --app                       # Linux: apt deps + cargo install -
 linux/deb.sh                                 # Linux package: target/release/kvm-switch_<version>_<arch>.deb (dpkg-deb, deps via dpkg-shlibdeps)
 ./release.sh X.Y.Z                           # bump Cargo.toml/.lock, commit, tag vX.Y.Z, push → CI (.github/workflows/release.yml) builds .dmg + .deb, publishes a GitHub release
 ```
-App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-previous | quit | tray]`. Exit code `2` (`EXIT_REFUSED`) means the request was refused or did not reach the running app.
+App CLI: `kvm-switch [open | switch <decimal VCP> | edge <esquerda|direita|cima|baixo> | switcher-next | switcher-previous | start | quit | tray]`. Exit code `2` (`EXIT_REFUSED`) means the request was refused or did not reach the running app.
 
 ## Code Conventions & Common Patterns
 - **Lints** (`Cargo.toml` `[lints]`):
@@ -92,7 +100,7 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-pre
 - **Comments:**
   - Every module and item gets a doc comment explaining *why*.
   - Mark a known limit as `// shortcut: <limit>, <when to upgrade>`.
-- **Config compatibility:** new `Config`/`Target` fields need `#[serde(default)]`, plus a test that an old file still loads (see `file_from_before_the_active_flag_loads_every_target_active`).
+- **Config compatibility:** new `Config`/`Target` fields need `#[serde(default)]`, plus a test that an old file still loads (see `file_from_before_the_active_flag_loads_every_target_active` and `file_from_before_the_modes_keeps_the_monitor_and_leaves_edges_off`). `Config` has a hand-written `Default` because `monitor_mode` defaults to `true`.
 - **Adding an icon:** three steps (see `assets/icons/README.md`):
   1. Add the PNG to `assets/icons/`.
   2. Add the emoji to `ICONS` in `src/ui/settings.rs`.
@@ -133,8 +141,8 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | switcher-next | switcher-pre
 - **Domain:** a hand-written `Fake` in `src/domain.rs` implements `Monitor` + `Peripherals` and records calls in order. Use it to check switch ordering and failure paths.
 - **Parsers:** fixtures are `const` strings or byte arrays copied from real tool or hardware output (ddcutil 2.2.5, m1ddc, DDPM, hidapitester, gsettings, hidraw). Add new fixtures from real captures and note their source.
 - **UI:** `src/ui/settings.rs` uses `#[gpui::test]` with `TestAppContext`.
-  - Fakes: `NoHardware` and `RecordingHotkeys`.
-  - Elements are found by `debug_selector` ids such as `"Name(0)"`, `"Hotkey(0)"`, `"Enabled(0)"` and `"SwitcherHotkey"`.
+  - Fakes: `NoHardware`, `RecordingHotkeys` and `RecordingEdges` (the sides the app last asked the edge sensor to watch).
+  - Elements are found by `debug_selector` ids such as `"Name(0)"`, `"Hotkey(0)"`, `"Enabled(0)"`, `"SwitcherHotkey"`, `"MonitorMode"`, `"EdgesMode"`, `"EdgeChannel(Left)"` and `"EdgeName(Left)"` (the `Side` Debug name).
 - **Filesystem tests:** temp dirs `std::env::temp_dir()/kvm-switch-test-{pid}-{name}`.
 - **Untested:**
   - `app.rs`, `ui/overlay.rs`, `adapters.rs` wiring, `linux/instance.rs`, `linux/tray.rs`.

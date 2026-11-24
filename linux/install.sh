@@ -152,6 +152,28 @@ EOF
     echo "  crie-os no seu ambiente rodando $HOME/.local/bin/kvm-switch switch <entrada>"
   fi
 
+  # Bordas: a extensão do GNOME Shell vê o cursor na borda e roda `kvm-switch edge <lado>`.
+  if command -v gnome-shell >/dev/null; then
+    local uuid=kvm-switch@mpgxc.github.io shell dest="$HOME/.local/share/gnome-shell/extensions"
+    shell=$(gnome-shell --version 2>/dev/null | grep -o '[0-9]\+' | head -n 1)
+    if [ "${shell:-0}" -lt 45 ]; then
+      echo "AVISO: as bordas precisam do GNOME Shell 45 ou mais novo (este: ${shell:-desconhecido})."
+    fi
+    mkdir -p "$dest"
+    rm -rf "${dest:?}/$uuid"
+    cp -r "gnome-extension/$uuid" "$dest/"
+    # O Shell recusa o enable de uma extensão que ainda não carregou; na lista do
+    # GNOME ela liga no próximo login.
+    if ! gnome-extensions enable "$uuid" 2>/dev/null; then
+      list="$(gsettings get org.gnome.shell enabled-extensions)"
+      if [[ "$list" != *"'$uuid'"* ]]; then
+        if [ "$list" = "@as []" ] || [ "$list" = "[]" ]; then list="['$uuid']"; else list="${list%]}, '$uuid']"; fi
+        gsettings set org.gnome.shell enabled-extensions "$list"
+      fi
+    fi
+    echo "Bordas: no Wayland a extensão do GNOME só carrega (ou atualiza) depois de sair e entrar na sessão."
+  fi
+
   # O ícone na barra, se ainda não estiver lá.
   pgrep -xf "$HOME/.local/bin/kvm-switch tray" >/dev/null ||
     (setsid "$HOME/.local/bin/kvm-switch" tray >/dev/null 2>&1 &)

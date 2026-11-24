@@ -81,7 +81,9 @@ na borda dele. Quem traz de volta é o app do outro PC, do mesmo jeito.
 
 - Atalhos dos destinos e do seletor não são registrados (`rebind` com lista vazia).
 - Seletor não abre; ícone na barra sem "Ir para …"; botões "Ir" desabilitados.
-- `kvm-switch switch N` recusado com mensagem e `EXIT_REFUSED`.
+- `kvm-switch switch N` não troca nada e mostra o aviso "O modo Monitor compartilhado
+  está desligado", como os outros erros de troca (o pedido pode chegar pelo socket, que
+  não devolve código de saída).
 - A lista de destinos continua visível e editável (só apagada), como um destino inativo.
 
 ### Caso de uso da borda

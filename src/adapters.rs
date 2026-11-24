@@ -51,10 +51,16 @@ pub fn first_action() -> Result<Option<Action>> {
 #[cfg(target_os = "linux")]
 pub use linux::{first_action, run_tray};
 
+#[cfg(target_os = "macos")]
+pub use macos::register_login_item;
+
 /// Monitor e periféricos deste sistema, sem janelas nem atalhos.
 #[cfg(target_os = "macos")]
 pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
-    (Arc::new(macos::MacMonitor), Arc::new(logi_bolt::LogiBolt))
+    (
+        Arc::new(macos::MacMonitor),
+        Arc::new(logi_bolt::LogiBolt::default()),
+    )
 }
 
 /// Monitor e periféricos deste sistema, sem janelas nem atalhos.
@@ -72,11 +78,27 @@ pub fn platform(actions: Sender<Action>) -> Result<Platform> {
     let (monitor, peripherals) = devices();
     Ok(Platform {
         monitor,
-        peripherals,
+        peripherals: app_peripherals(peripherals),
         status_menu: status_menu(actions.clone())?,
         edge_sensor: edge_sensor(actions.clone()),
         hotkeys: hotkeys(actions)?,
     })
+}
+
+/// Os periféricos com o app aberto. No macOS a busca dos slots começa já, para a
+/// primeira troca não esperar por ela; a troca sem janela (`devices`) não ganharia
+/// nada com isso.
+#[cfg(target_os = "macos")]
+fn app_peripherals(_: Arc<dyn Peripherals>) -> Arc<dyn Peripherals> {
+    let bolt = logi_bolt::LogiBolt::default();
+    bolt.search_in_background();
+    Arc::new(bolt)
+}
+
+/// Os periféricos com o app aberto: no Linux, os mesmos da troca sem janela.
+#[cfg(target_os = "linux")]
+fn app_peripherals(peripherals: Arc<dyn Peripherals>) -> Arc<dyn Peripherals> {
+    peripherals
 }
 
 #[cfg(target_os = "macos")]

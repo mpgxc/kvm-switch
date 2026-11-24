@@ -4,6 +4,8 @@
 
 use std::{
     collections::HashMap,
+    fs,
+    path::Path,
     str::FromStr,
     sync::{Arc, Mutex},
     thread,
@@ -228,6 +230,113 @@ fn cursor_and_screens() -> Option<(f64, f64, Vec<Rect>)> {
     Some((at.x, at.y, screens))
 }
 
+/// Ícone na barra de menus (NSStatusItem). Criado na thread principal com o app
+/// já iniciado, dentro de `Application::run`, como o `tray-icon` exige.
+pub struct MacStatusMenu {
+    icon: TrayIcon,
+}
+
+impl MacStatusMenu {
+    pub fn new(actions: Sender<Action>) -> Result<Self> {
+        let icon = TrayIconBuilder::new()
+            .with_id("kvm-switch")
+            .with_tooltip("KVM Switch")
+            .with_icon(tray::icon()?)
+            .build()
+            .context("não consegui criar o ícone na barra de menus")?;
+        // O id de cada item é o pedido em texto (veja `tray::entries`).
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if let Ok(action) = request::parse(&event.id.0) {
+                actions.try_send(action).ok();
+            }
+        }));
+        Ok(Self { icon })
+    }
+}
+
+impl StatusMenu for MacStatusMenu {
+    fn show(&mut self, config: &Config) {
+        match tray::menu(config) {
+            Ok(menu) => self.icon.set_menu(Some(Box::new(menu))),
+            Err(error) => eprintln!("kvm-switch: {error:#}"),
+        }
+    }
+}
+
+/// Identificador do app, o mesmo do `Info.plist` gerado pelo `macos/bundle.sh`.
+const BUNDLE_ID: &str = "io.github.mpgxc.kvm-switch";
+
+/// Faz o app abrir sozinho no login, sem janela (`start`), porque o modo Bordas só
+/// funciona com ele aberto. É um LaunchAgent que roda `open -g -a <app> --args start`:
+/// o `open` passa pelo LaunchServices, então segue havendo um só app aberto, com
+/// ícone no Dock, e funciona com a assinatura ad hoc do `bundle.sh` sem outra
+/// dependência (o `SMAppService` pediria bindings de Objective-C).
+// shortcut: não há opção para desligar na janela; quem não quiser desliga o item
+// em Ajustes → Geral → Itens de Início. Criar a opção se alguém pedir.
+pub fn register_login_item() -> Result<()> {
+    let home = dirs::home_dir().context("pasta pessoal desconhecida")?;
+    let exe = std::env::current_exe().context("caminho do executável desconhecido")?;
+    write_login_item(&exe, &home)
+}
+
+/// O trabalho de `register_login_item`, com os caminhos de fora para o teste.
+fn write_login_item(exe: &Path, home: &Path) -> Result<()> {
+    let Some(bundle) = installed_bundle(exe, home) else {
+        return Ok(());
+    };
+    let bundle = bundle.to_str().context("o caminho do app não é UTF-8")?;
+    let folder = home.join("Library/LaunchAgents");
+    let path = folder.join(format!("{BUNDLE_ID}.plist"));
+    let plist = login_item_plist(bundle);
+    // Só escreve se mudou (outro lugar do app ou primeira vez): o arquivo fica
+    // intocado nas aberturas seguintes.
+    if fs::read_to_string(&path).is_ok_and(|current| current == plist) {
+        return Ok(());
+    }
+    fs::create_dir_all(&folder)
+        .with_context(|| format!("não consegui criar {}", folder.display()))?;
+    fs::write(&path, plist).with_context(|| format!("não consegui gravar {}", path.display()))
+}
+
+/// O `.app` em que o executável roda, se estiver instalado em `/Applications` ou
+/// `~/Applications`. Fora disso (`cargo run`, o `.app` em `target/`, o aberto direto
+/// do .dmg ou transladado pelo Gatekeeper) o caminho não serve para o próximo login.
+fn installed_bundle<'a>(exe: &'a Path, home: &Path) -> Option<&'a Path> {
+    let bundle = exe.parent()?.parent()?.parent()?;
+    let folder = bundle.parent()?;
+    let installed = folder == Path::new("/Applications") || folder == home.join("Applications");
+    (bundle.extension()? == "app" && installed).then_some(bundle)
+}
+
+/// O LaunchAgent que abre o app em `bundle` no login, em segundo plano e sem janela.
+fn login_item_plist(bundle: &str) -> String {
+    let bundle = bundle
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{BUNDLE_ID}</string>
+  <key>AssociatedBundleIdentifiers</key><string>{BUNDLE_ID}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-g</string>
+    <string>-a</string>
+    <string>{bundle}</string>
+    <string>--args</string>
+    <string>start</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,37 +379,48 @@ mod tests {
             assert!(parse(&shortcut).is_ok(), "{shortcut}");
         }
     }
-}
 
-/// Ícone na barra de menus (NSStatusItem). Criado na thread principal com o app
-/// já iniciado, dentro de `Application::run`, como o `tray-icon` exige.
-pub struct MacStatusMenu {
-    icon: TrayIcon,
-}
-
-impl MacStatusMenu {
-    pub fn new(actions: Sender<Action>) -> Result<Self> {
-        let icon = TrayIconBuilder::new()
-            .with_id("kvm-switch")
-            .with_tooltip("KVM Switch")
-            .with_icon(tray::icon()?)
-            .build()
-            .context("não consegui criar o ícone na barra de menus")?;
-        // O id de cada item é o pedido em texto (veja `tray::entries`).
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Ok(action) = request::parse(&event.id.0) {
-                actions.try_send(action).ok();
-            }
-        }));
-        Ok(Self { icon })
+    #[test]
+    fn only_an_installed_app_becomes_a_login_item() {
+        let home = Path::new("/Users/eu");
+        let exe = |path: &str| Path::new(path).join("KVM Switch.app/Contents/MacOS/kvm-switch");
+        assert_eq!(
+            installed_bundle(&exe("/Applications"), home),
+            Some(Path::new("/Applications/KVM Switch.app"))
+        );
+        assert_eq!(
+            installed_bundle(&exe("/Users/eu/Applications"), home),
+            Some(Path::new("/Users/eu/Applications/KVM Switch.app"))
+        );
+        assert_eq!(installed_bundle(&exe("/Volumes/KVM Switch"), home), None);
+        assert_eq!(
+            installed_bundle(&exe("/Users/eu/kvm-switch/target/release"), home),
+            None
+        );
+        let cargo_run = Path::new("/Users/eu/kvm-switch/target/debug/kvm-switch");
+        assert_eq!(installed_bundle(cargo_run, home), None);
     }
-}
 
-impl StatusMenu for MacStatusMenu {
-    fn show(&mut self, config: &Config) {
-        match tray::menu(config) {
-            Ok(menu) => self.icon.set_menu(Some(Box::new(menu))),
-            Err(error) => eprintln!("kvm-switch: {error:#}"),
-        }
+    #[test]
+    fn login_item_is_a_valid_launch_agent_that_starts_without_a_window() {
+        let home =
+            std::env::temp_dir().join(format!("kvm-switch-test-{}-login-item", std::process::id()));
+        let exe = home.join("Applications/K&V <M>.app/Contents/MacOS/kvm-switch");
+        write_login_item(&exe, &home).expect("gravar o item de login");
+        let path = home.join("Library/LaunchAgents/io.github.mpgxc.kvm-switch.plist");
+        let lint = std::process::Command::new("/usr/bin/plutil")
+            .arg("-lint")
+            .arg(&path)
+            .output()
+            .expect("rodar o plutil");
+        let plist = fs::read_to_string(&path).expect("ler o item de login");
+        fs::remove_dir_all(&home).ok();
+        assert!(
+            lint.status.success(),
+            "{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+        assert!(plist.contains("<string>start</string>"));
+        assert!(plist.contains("/Applications/K&amp;V &lt;M&gt;.app</string>"));
     }
 }

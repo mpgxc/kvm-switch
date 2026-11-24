@@ -44,6 +44,13 @@ NoDisplay=true
 X-GNOME-Autostart-enabled=true
 EOF
 
+# Bordas: a extensão do GNOME Shell (45 ou mais novo), para todos os usuários. O app a
+# liga quando as Bordas são ligadas; no Wayland ela só carrega numa sessão nova.
+ext=kvm-switch@mpgxc.github.io
+for f in "linux/gnome-extension/$ext"/*; do
+  install -Dm644 "$f" "$root/usr/share/gnome-shell/extensions/$ext/${f##*/}"
+done
+
 # Bibliotecas ligadas no binário; o dpkg-shlibdeps só roda ao lado de um debian/control.
 mkdir "$root/debian"
 echo 'Source: kvm-switch' >"$root/debian/control"

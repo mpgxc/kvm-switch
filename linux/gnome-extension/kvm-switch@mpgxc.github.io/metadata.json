@@ -1,0 +1,7 @@
+{
+  "uuid": "kvm-switch@mpgxc.github.io",
+  "name": "KVM Switch: bordas",
+  "description": "Empurrar o cursor contra a borda externa da tela roda `kvm-switch edge <lado>`, que manda teclado e mouse Logitech para o PC vizinho daquele lado.",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": "https://github.com/mpgxc/kvm-switch"
+}

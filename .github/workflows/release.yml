@@ -23,8 +23,9 @@ jobs:
           path: target/release/*.dmg
 
   linux:
-    # A glibc mais antiga entre as versões suportadas: o .deb roda no 22.04 e depois.
-    runs-on: ubuntu-22.04
+    # A glibc mais antiga entre as versões suportadas: as bordas precisam do GNOME 45+,
+    # e o 24.04 é o primeiro Ubuntu LTS com ele. O .deb roda no 24.04 e depois.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: |

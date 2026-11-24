@@ -132,9 +132,9 @@ fn set(path: &str, key: &str, value: &str) -> Result<()> {
     .map(drop)
 }
 
-/// Os caminhos numa lista impressa pelo `gsettings get`, como `['/a/', '/b/']`.
+/// Os textos numa lista impressa pelo `gsettings get`, como `['/a/', '/b/']`.
 /// A lista vazia sai como `@as []`.
-fn quoted(value: &str) -> Vec<String> {
+pub(super) fn quoted(value: &str) -> Vec<String> {
     value
         .split('\'')
         .skip(1)
@@ -149,8 +149,9 @@ fn name(action: Action) -> String {
         Action::SwitchTo(input) => format!("KVM Switch: {}", input.label()),
         Action::SwitcherNext => "KVM Switch: seletor".into(),
         Action::SwitcherPrevious => "KVM Switch: seletor, voltar".into(),
-        Action::OpenSettings => "KVM Switch".into(),
+        Action::OpenSettings | Action::Start => "KVM Switch".into(),
         Action::Quit => "KVM Switch: encerrar".into(),
+        Action::CrossEdge(side) => format!("KVM Switch: borda {}", side.word()),
     }
 }
 
