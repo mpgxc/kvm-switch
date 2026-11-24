@@ -34,7 +34,8 @@ na borda dele. Quem traz de volta é o app do outro PC, do mesmo jeito.
 
 - Passar a altura/posição do cursor para o outro PC, área de transferência, arrastar
   arquivos: exigiriam rede.
-- Adapter de Windows.
+- ~~Adapter de Windows.~~ Revisto: o Windows entrou com o merge de `feature/windows`
+  e usa a mesma consulta do cursor do macOS (`adapters/cursor.rs`).
 - Atalho ou item no ícone da barra para ligar/desligar as bordas.
 - Tecla modificadora obrigatória para atravessar ("segure Ctrl").
 
