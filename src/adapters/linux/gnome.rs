@@ -150,7 +150,7 @@ fn name(action: Action) -> String {
         Action::SwitcherNext => "KVM Switch: seletor".into(),
         Action::SwitcherPrevious => "KVM Switch: seletor, voltar".into(),
         Action::OpenSettings | Action::Start => "KVM Switch".into(),
-        Action::Quit => "KVM Switch: encerrar".into(),
+        Action::Quit | Action::QuitNow => "KVM Switch: encerrar".into(),
         Action::CrossEdge(side) => format!("KVM Switch: borda {}", side.word()),
     }
 }

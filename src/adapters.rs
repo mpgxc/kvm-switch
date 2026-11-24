@@ -2,10 +2,12 @@
 //!
 //! Para dar suporte a outro sistema, crie um módulo aqui com as portas
 //! (`Monitor`, `Peripherals`, `Hotkeys`, `EdgeSensor` e, se o ícone na barra
-//! morar no app, `StatusMenu`) e as funções `platform` e `first_action` para ele.
+//! morar no app, `StatusMenu`) e a função `platform` para ele, e um transporte em
+//! `instance` para o app atender as outras execuções.
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod cursor;
+mod instance;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -50,19 +52,10 @@ pub const LOCAL_ICON: &str = "🐧";
 #[cfg(target_os = "windows")]
 pub const LOCAL_ICON: &str = "🪟";
 
-/// O que esta execução do programa faz ao abrir. `None`: o pedido foi entregue
-/// a um app que já estava aberto e esta execução pode sair.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub fn first_action() -> Result<Option<Action>> {
-    // O item de login abre o app com `start`, sem janela; o resto mostra a configuração.
-    if std::env::args().skip(1).eq(["start"]) {
-        return Ok(Some(Action::Start));
-    }
-    Ok(Some(Action::OpenSettings))
-}
+pub use instance::{Launch, deliver, first_action, take_over};
 
 #[cfg(target_os = "linux")]
-pub use linux::{first_action, run_tray};
+pub use linux::run_tray;
 
 #[cfg(target_os = "macos")]
 pub use macos::register_login_item;
@@ -94,9 +87,11 @@ pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
     )
 }
 
-/// Monta os adapters deste sistema. Os atalhos pressionados e os itens do ícone
-/// na barra saem por `actions`. No macOS precisa rodar com o app já iniciado.
+/// Monta os adapters deste sistema. Os atalhos pressionados, os itens do ícone na
+/// barra e os pedidos das outras execuções do programa saem por `actions`. No
+/// macOS precisa rodar com o app já iniciado.
 pub fn platform(actions: Sender<Action>) -> Result<Platform> {
+    instance::listen(actions.clone())?;
     let (monitor, peripherals) = devices();
     Ok(Platform {
         monitor,
@@ -125,12 +120,18 @@ fn app_peripherals(peripherals: Arc<dyn Peripherals>) -> Arc<dyn Peripherals> {
 
 #[cfg(target_os = "macos")]
 fn edge_sensor(actions: Sender<Action>) -> Box<dyn EdgeSensor> {
-    Box::new(cursor::PollingEdges::new(actions, macos::cursor_and_screens))
+    Box::new(cursor::PollingEdges::new(
+        actions,
+        macos::cursor_and_screens,
+    ))
 }
 
 #[cfg(target_os = "windows")]
 fn edge_sensor(actions: Sender<Action>) -> Box<dyn EdgeSensor> {
-    Box::new(cursor::PollingEdges::new(actions, windows::cursor_and_screens))
+    Box::new(cursor::PollingEdges::new(
+        actions,
+        windows::cursor_and_screens,
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -161,9 +162,8 @@ fn hotkeys(actions: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
 }
 
 #[cfg(target_os = "linux")]
-fn hotkeys(actions: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
-    // No GNOME cada atalho roda este programa de novo; o pedido chega por aqui.
-    linux::listen(actions)?;
+fn hotkeys(_: Sender<Action>) -> Result<Box<dyn Hotkeys>> {
+    // No GNOME cada atalho roda este programa de novo; o pedido chega por `instance`.
     Ok(Box::new(linux::GnomeHotkeys::new()?))
 }
 

@@ -8,7 +8,7 @@ use gpui::{
     prelude::*, px, rgb, size,
 };
 
-use super::theme;
+use super::{CONTROL_HEIGHT, button, theme};
 use crate::{
     app::AppState,
     domain::{Channel, Config, Edges, InputCode, Neighbor, Side, Target},
@@ -19,8 +19,6 @@ const ICONS: [&str; 6] = ["🖥", "💻", "🍎", "🐧", "🪟", "🎮"];
 
 const WINDOW_WIDTH: f32 = 1010.;
 const WINDOW_HEIGHT: f32 = 700.;
-/// Altura dos campos e dos botões.
-const CONTROL_HEIGHT: f32 = 30.;
 const ACTIVE_WIDTH: f32 = 40.;
 const CHECKBOX_SIZE: f32 = 18.;
 /// Opacidade de uma linha fora do seletor.
@@ -349,7 +347,9 @@ impl SettingsView {
             .gap_3()
             // Fora do seletor, ou com o monitor compartilhado desligado, a linha fica apagada,
             // mas continua editável.
-            .when(!enabled || !monitor_mode, |rest| rest.opacity(INACTIVE_OPACITY))
+            .when(!enabled || !monitor_mode, |rest| {
+                rest.opacity(INACTIVE_OPACITY)
+            })
             .child(
                 button(
                     ("icon", index),
@@ -446,8 +446,13 @@ impl SettingsView {
                     })),
             )
             .child(
-                self.field(Field::EdgeName(side), neighbor.name.clone(), "nome do PC", cx)
-                    .w(px(EDGE_NAME_WIDTH)),
+                self.field(
+                    Field::EdgeName(side),
+                    neighbor.name.clone(),
+                    "nome do PC",
+                    cx,
+                )
+                .w(px(EDGE_NAME_WIDTH)),
             )
     }
 
@@ -470,7 +475,10 @@ impl SettingsView {
                 Some("⚠ Encostar no Dock já leva teclado e mouse."),
             )
         } else if cfg!(target_os = "windows") {
-            (None, Some("⚠ Encostar na barra de tarefas já leva teclado e mouse."))
+            (
+                None,
+                Some("⚠ Encostar na barra de tarefas já leva teclado e mouse."),
+            )
         } else {
             (None, None)
         };
@@ -898,23 +906,6 @@ fn toggle(id: &'static str, label: &'static str, checked: bool) -> Stateful<Div>
         .items_center()
         .cursor_pointer()
         .child(checkbox(id, checked))
-        .child(label)
-}
-
-fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
-    div()
-        .id(id)
-        .h(px(CONTROL_HEIGHT))
-        .px_3()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme::BORDER))
-        .bg(rgb(theme::FIELD))
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::HOVER)))
         .child(label)
 }
 

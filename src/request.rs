@@ -8,7 +8,7 @@ use crate::{
     ports::Action,
 };
 
-const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | edge <lado> | switcher-next | switcher-previous | start | quit | tray]\n\
+const USAGE: &str = "uso: kvm-switch [open | switch <entrada> | edge <lado> | switcher-next | switcher-previous | start | quit | quit-now | tray]\n\
     <entrada> é o valor do VCP 0x60 em decimal, como no config.json\n\
     <lado> é esquerda, direita, cima ou baixo";
 
@@ -20,6 +20,7 @@ pub fn arguments(action: Action) -> String {
         Action::SwitcherPrevious => "switcher-previous".into(),
         Action::OpenSettings => "open".into(),
         Action::Quit => "quit".into(),
+        Action::QuitNow => "quit-now".into(),
         Action::CrossEdge(side) => format!("edge {}", side.word()),
         Action::Start => "start".into(),
     }
@@ -38,6 +39,7 @@ pub fn parse(request: &str) -> Result<Action> {
         ["switcher-next"] => Action::SwitcherNext,
         ["switcher-previous"] => Action::SwitcherPrevious,
         ["quit"] => Action::Quit,
+        ["quit-now"] => Action::QuitNow,
         ["edge", side] => Action::CrossEdge(
             Side::from_word(side).with_context(|| format!("lado inválido: {side}\n{USAGE}"))?,
         ),
@@ -59,6 +61,7 @@ mod tests {
             Action::SwitcherPrevious,
             Action::OpenSettings,
             Action::Quit,
+            Action::QuitNow,
             Action::CrossEdge(Side::Left),
             Action::CrossEdge(Side::Bottom),
             Action::Start,

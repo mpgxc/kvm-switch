@@ -5,7 +5,6 @@
 mod edges;
 mod gnome;
 mod hidraw;
-mod instance;
 mod tray;
 
 use std::{fs, path::PathBuf, sync::Mutex};
@@ -13,11 +12,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 use anyhow::{Context as _, Result, bail};
 
 pub use self::{
-    edges::GnomeEdges,
-    gnome::GnomeHotkeys,
-    hidraw::LogiReceiver,
-    instance::{first_action, listen},
-    tray::run as run_tray,
+    edges::GnomeEdges, gnome::GnomeHotkeys, hidraw::LogiReceiver, tray::run as run_tray,
 };
 use super::{mccs::capability_inputs, run};
 use crate::{domain::InputCode, ports::Monitor};

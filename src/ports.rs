@@ -32,8 +32,10 @@ pub enum Action {
     /// Mostrar a janela de configuração. No Linux é o que chega quando o
     /// programa é aberto de novo com o app já rodando.
     OpenSettings,
-    /// Encerrar o app.
+    /// Encerrar o app, depois de perguntar.
     Quit,
+    /// Encerrar o app sem perguntar: outra execução já perguntou e vai ocupar o lugar dele.
+    QuitNow,
     /// O cursor atravessou a borda deste lado: teclado e mouse vão para o vizinho.
     CrossEdge(Side),
     /// Iniciar sem abrir janela. É o que o login do macOS pede, para as bordas

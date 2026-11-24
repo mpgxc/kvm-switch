@@ -3,10 +3,30 @@
 pub mod overlay;
 pub mod settings;
 
-use gpui::{AnyElement, Pixels, SharedString, div, prelude::*};
+use gpui::{AnyElement, Div, ElementId, Pixels, SharedString, Stateful, div, prelude::*, px, rgb};
 
 /// Identidade das janelas no Wayland; liga o app ao `kvm-switch.desktop`.
 const APP_ID: &str = "kvm-switch";
+/// Altura dos campos e dos botões.
+const CONTROL_HEIGHT: f32 = 30.;
+
+/// Botão com o visual comum das janelas do app.
+fn button(id: impl Into<ElementId>, label: impl IntoElement) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(CONTROL_HEIGHT))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(theme::BORDER))
+        .bg(rgb(theme::FIELD))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(theme::HOVER)))
+        .child(label)
+}
 
 /// Desenha o ícone de um destino com `size` de altura.
 ///

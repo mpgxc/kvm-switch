@@ -67,11 +67,14 @@ pub fn run() -> Result<()> {
             Ok(Click::Icon) => ask(Action::OpenSettings),
             Ok(Click::Item(id)) => match request::parse(&id) {
                 Ok(Action::Quit) => {
-                    // Fecha também o app, se estiver aberto, e espera para não deixar zumbi.
-                    if let Ok(mut child) = command(Action::Quit).spawn() {
-                        child.wait().ok();
+                    // `kvm-switch quit` pergunta antes e, com o sim, fecha também o app
+                    // aberto. O ícone só sai se a pessoa confirmou.
+                    let confirmed = command(Action::Quit)
+                        .status()
+                        .is_ok_and(|status| status.success());
+                    if confirmed {
+                        return Ok(());
                     }
-                    return Ok(());
                 }
                 Ok(action) => ask(action),
                 Err(error) => eprintln!("kvm-switch tray: {error:#}"),

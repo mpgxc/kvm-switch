@@ -17,14 +17,15 @@ The code follows hexagonal (ports and adapters) layering, described in the `src/
 - `ports.rs` defines the traits each OS must provide: `Monitor`, `Peripherals` (both `Send + Sync`), `Hotkeys`, `StatusMenu` and `EdgeSensor`, plus `enum Action` (including `CrossEdge(Side)` and `Start`, the window-less start used by the macOS login item and the Windows startup shortcut).
 - `adapters.rs` does the wiring:
   - `Platform { monitor, peripherals, hotkeys, status_menu, edge_sensor }`.
-  - Each OS has its own `#[cfg(target_os)]` versions of `first_action`, `devices`, `platform`, `hotkeys` and `edge_sensor`. Any other OS hits `compile_error!`.
+  - Each OS has its own `#[cfg(target_os)]` versions of `devices`, `hotkeys`, `status_menu` and `edge_sensor`; `first_action` and `listen` come from the shared `instance` module. Any other OS hits `compile_error!`.
   - The `run(program, args)` helper runs external commands.
 - `app.rs`: `AppState` is a GPUI entity. Its `handle(Action)` dispatches every action.
-- `ui/`: `settings.rs` (settings view) and `overlay.rs` (switcher and HUD).
-- `request.rs`: the text protocol shared by the CLI args, the Linux socket and the tray item ids (`arguments(Action)` ↔ `parse(&str)`).
+- `ui/`: `settings.rs` (settings view) and `overlay.rs` (switcher, HUD and the yes/no `Question` dialog: Enter = yes, Esc = no; the caller closes it).
+- `request.rs`: the text protocol shared by the CLI args, the instance socket/pipe and the tray item ids (`arguments(Action)` ↔ `parse(&str)`).
+- `adapters/instance.rs`: one app per session on every OS. `first_action()` returns a `Launch`: `Delivered` (sent to the open app), `Run(action)`, `AlreadyOpen` (a manual open with an app open: ask "encerrar e abrir de novo?") or `ConfirmQuit` (`kvm-switch quit`: ask here, then send `quit-now`; exit code 2 on "no"). Shortcuts, edges and CLI requests go straight to the open app. Transport: `instance/socket.rs` (Unix socket; `$XDG_RUNTIME_DIR` on Linux, `~/Library/Caches/kvm-switch` on macOS) or `instance/pipe.rs` (named pipe `\\.\pipe\kvm-switch-<USERNAME>` on Windows).
 
 Flow:
-1. Every input becomes an `Action` on one `async_channel`. The sources are a hotkey, a tray click, a CLI argument or the Linux socket.
+1. Every input becomes an `Action` on one `async_channel`. The sources are a hotkey, a tray click, a CLI argument or another run of the program (through `instance`).
 2. The GPUI loop calls `AppState::handle`.
 3. `Kvm::switch` runs on `background_executor`.
 4. The outcome comes back as a HUD message or a status line.
@@ -42,7 +43,7 @@ Platform specifics:
   - `linux/hidraw.rs`: raw HID++ to `/dev/hidrawN`, one thread per slot, `libc::poll`.
   - `linux/gnome.rs`: GNOME custom keybindings via `gsettings`, which run `kvm-switch <request>`.
   - Edges: a GNOME Shell extension (GNOME 45+, uuid `kvm-switch@mpgxc.github.io`, source in `linux/gnome-extension/`) puts pressure barriers on the outer edges and runs `kvm-switch edge <lado>`. `linux/edges.rs` (`GnomeEdges`) only enables it (`gnome-extensions enable`, falling back to `org.gnome.shell enabled-extensions` when the shell hasn't loaded it yet) and reports whether it is ACTIVE. Installed by `install.sh --app` (`~/.local/share/gnome-shell/extensions/`) and `deb.sh` (`/usr/share/gnome-shell/extensions/`); on Wayland it loads only after logging out and in.
-  - `linux/instance.rs`: single instance via a Unix socket at `$XDG_RUNTIME_DIR/kvm-switch.sock`.
+  - Single instance is shared code now: see `adapters/instance.rs` above.
   - `linux/tray.rs`: `kvm-switch tray` runs as a separate process without GPUI.
 - **Windows**
   - `adapters/windows.rs`: monitor via `ddc-hi` and the Windows Monitor Configuration API; peripherals via `hidapi`'s native Windows backend; hotkeys via `global-hotkey`; tray via `tray-icon`; `cursor_and_screens` reads `GetCursorPos` and `EnumDisplayMonitors` (virtual-screen coordinates) for `adapters/cursor.rs`.
@@ -53,6 +54,7 @@ Platform specifics:
 - The monitor switches first. Peripherals move only if the monitor succeeded.
 - When the target is the local input, peripherals are untouched. The result is `AlreadyHere` if the monitor is already on that input.
 - An edge crossing never touches the monitor (`Kvm::cross` calls only `Peripherals`).
+- `Action::Quit` always asks first (in the app, or in the `kvm-switch quit` run); only `Action::QuitNow`, sent by a run that already asked, quits without asking.
 - With `monitor_mode` off: no hotkeys are registered, the switcher doesn't open, `SwitchTo` only shows the `MONITOR_MODE_OFF` notice, and the tray has no "Ir para …" items.
 - `Config::merge_inputs` never removes or edits existing targets.
 - On Linux, GPUI quits with its last window:
@@ -154,7 +156,7 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | edge <esquerda|direita|cima|
   - Elements are found by `debug_selector` ids such as `"Name(0)"`, `"Hotkey(0)"`, `"Enabled(0)"`, `"SwitcherHotkey"`, `"MonitorMode"`, `"EdgesMode"`, `"EdgeChannel(Left)"` and `"EdgeName(Left)"` (the `Side` Debug name).
 - **Filesystem tests:** temp dirs `std::env::temp_dir()/kvm-switch-test-{pid}-{name}`.
 - **Untested:**
-  - `app.rs`, `ui/overlay.rs`, `adapters.rs` wiring, `linux/instance.rs`, `linux/tray.rs`.
+  - `app.rs`, `adapters.rs` wiring, `main.rs` launch flows (`AlreadyOpen`, `ConfirmQuit`), `linux/tray.rs`.
   - Real hardware I/O.
   - All shell scripts (there is no shellcheck setup).
 - A full run needs the supported OS and hardware. Before finishing, run `cargo test` and the clippy gate on the OS you changed.

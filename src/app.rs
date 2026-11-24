@@ -15,7 +15,7 @@ use crate::{
     domain::{Config, Cycle, InputCode, Kvm, Outcome, Side},
     ports::{Action, EdgeSensor, Hotkeys, StatusMenu},
     ui::{
-        overlay::{self, Focus, HudView, SwitcherItem, SwitcherView},
+        overlay::{self, Focus, HudView, Question, SwitcherItem, SwitcherView},
         settings,
     },
 };
@@ -32,6 +32,22 @@ const CROSS_PAUSE: Duration = Duration::from_secs(1);
 
 /// Aviso de quando algo pede a troca de tela com o modo Monitor compartilhado desligado.
 pub const MONITOR_MODE_OFF: &str = "O modo Monitor compartilhado está desligado";
+
+/// A pergunta antes de encerrar. No Linux os atalhos e as bordas são do GNOME e
+/// continuam valendo; nos outros sistemas, só com o app aberto.
+pub fn quit_question() -> Question {
+    let detail = if cfg!(target_os = "linux") {
+        "O app fecha. Os atalhos e as bordas continuam valendo pelo GNOME."
+    } else {
+        "Os atalhos, o seletor e as bordas param de funcionar até o app abrir de novo."
+    };
+    Question {
+        message: "Encerrar o KVM Switch?".into(),
+        detail: detail.into(),
+        yes: "Encerrar".into(),
+        no: "Cancelar".into(),
+    }
+}
 
 /// Quantas trocas estão em andamento. No Linux o GPUI encerra o app quando a
 /// última janela fecha, e sair no meio de uma troca deixaria o monitor numa
@@ -94,6 +110,8 @@ pub struct AppState {
     crossing: bool,
     /// Quando a última travessia terminou.
     crossed_at: Option<Instant>,
+    /// A pergunta "encerrar?" aberta, para não abrir outra igual.
+    quit_question: Option<AnyWindowHandle>,
 }
 
 struct ActiveSwitcher {
@@ -126,6 +144,7 @@ impl AppState {
             hud: None,
             crossing: false,
             crossed_at: None,
+            quit_question: None,
         };
         state.rebind();
         state.refresh_status_menu();
@@ -228,18 +247,38 @@ impl AppState {
             Action::SwitcherPrevious => self.step_switcher(Cycle::back, cx),
             // Adiado: a janela lê este estado ao ser montada, e ele está em uso agora.
             Action::OpenSettings => cx.defer(settings::open),
-            Action::Quit => cx.quit(),
+            Action::Quit => self.ask_to_quit(cx),
+            Action::QuitNow => cx.quit(),
             Action::CrossEdge(side) => self.cross(side, cx),
             // O app já está rodando: as bordas e os atalhos valem sem janela.
             Action::Start => {}
         }
     }
 
+    /// Pergunta antes de encerrar; com a pergunta já aberta, só a traz para a frente.
+    fn ask_to_quit(&mut self, cx: &mut Context<Self>) {
+        if let Some(window) = self.quit_question
+            && window
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        let this = cx.entity().downgrade();
+        self.quit_question =
+            overlay::open_question(quit_question(), cx, move |quit, window, cx| {
+                if quit {
+                    cx.quit();
+                    return;
+                }
+                this.update(cx, |this, _| this.quit_question = None).ok();
+                overlay::close(window, cx);
+            });
+    }
+
     /// Manda teclado e mouse para o vizinho de `side`, uma travessia por vez.
     fn cross(&mut self, side: Side, cx: &mut Context<Self>) {
-        let paused = self
-            .crossed_at
-            .is_some_and(|at| at.elapsed() < CROSS_PAUSE);
+        let paused = self.crossed_at.is_some_and(|at| at.elapsed() < CROSS_PAUSE);
         if self.crossing || paused || self.config.edges.channel(side).is_none() {
             return;
         }

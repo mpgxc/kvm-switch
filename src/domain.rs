@@ -418,17 +418,39 @@ pub fn edge_at(x: f64, y: f64, screens: &[Rect]) -> Option<Side> {
     let near_corner_y = y < top + CORNER || y >= bottom - CORNER;
     // O ponto logo depois da borda: se outra tela o contém, a borda é interna.
     let candidates = [
-        (Side::Left, x < left + EDGE_TOLERANCE, (left - EDGE_TOLERANCE, y), near_corner_y),
-        (Side::Right, x >= right - EDGE_TOLERANCE, (right + EDGE_TOLERANCE, y), near_corner_y),
-        (Side::Top, y < top + EDGE_TOLERANCE, (x, top - EDGE_TOLERANCE), near_corner_x),
-        (Side::Bottom, y >= bottom - EDGE_TOLERANCE, (x, bottom + EDGE_TOLERANCE), near_corner_x),
+        (
+            Side::Left,
+            x < left + EDGE_TOLERANCE,
+            (left - EDGE_TOLERANCE, y),
+            near_corner_y,
+        ),
+        (
+            Side::Right,
+            x >= right - EDGE_TOLERANCE,
+            (right + EDGE_TOLERANCE, y),
+            near_corner_y,
+        ),
+        (
+            Side::Top,
+            y < top + EDGE_TOLERANCE,
+            (x, top - EDGE_TOLERANCE),
+            near_corner_x,
+        ),
+        (
+            Side::Bottom,
+            y >= bottom - EDGE_TOLERANCE,
+            (x, bottom + EDGE_TOLERANCE),
+            near_corner_x,
+        ),
     ];
     candidates
         .into_iter()
         .find(|&(_, touching, (beyond_x, beyond_y), in_corner)| {
             touching
                 && !in_corner
-                && !screens.iter().any(|other| other.contains(beyond_x, beyond_y))
+                && !screens
+                    .iter()
+                    .any(|other| other.contains(beyond_x, beyond_y))
         })
         .map(|(side, ..)| side)
 }
@@ -766,10 +788,9 @@ mod tests {
 
     #[test]
     fn file_from_before_the_modes_keeps_the_monitor_and_leaves_edges_off() {
-        let config: Config = serde_json::from_str(
-            r#"{"targets": [], "local_input": 27, "switcher_hotkey": null}"#,
-        )
-        .expect("arquivo antigo");
+        let config: Config =
+            serde_json::from_str(r#"{"targets": [], "local_input": 27, "switcher_hotkey": null}"#)
+                .expect("arquivo antigo");
         assert!(config.monitor_mode);
         assert_eq!(config.edges, Edges::default());
         assert!(!config.edges.enabled);
@@ -864,6 +885,9 @@ mod tests {
         let mut watch = EdgeWatch::default();
         watch.observe(None, &[Side::Right]);
         assert_eq!(watch.observe(Some(Side::Bottom), &[Side::Right]), None);
-        assert_eq!(watch.observe(Some(Side::Right), &[Side::Right]), Some(Side::Right));
+        assert_eq!(
+            watch.observe(Some(Side::Right), &[Side::Right]),
+            Some(Side::Right)
+        );
     }
 }

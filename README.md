@@ -22,7 +22,7 @@ cargo run --release
 
 Não precisa do Xcode completo: os shaders são compilados quando o app abre.
 
-Fechar a janela não encerra o app, que precisa continuar rodando para ouvir os atalhos e vigiar as bordas. Clicar no ícone do Dock abre a configuração de novo; ⌘Q encerra. O ícone 🖥 na barra de menus tem o mesmo menu do Linux (veja [Usar](#usar)).
+Fechar a janela não encerra o app, que precisa continuar rodando para ouvir os atalhos e vigiar as bordas. Clicar no ícone do Dock abre a configuração de novo; ⌘Q pergunta antes de encerrar. O ícone 🖥 na barra de menus tem o mesmo menu do Linux (veja [Usar](#usar)).
 
 #### Instalador (.app e .dmg)
 
@@ -62,7 +62,7 @@ No Linux o app não fica aberto esperando atalhos:
 
 - Cada atalho é um atalho personalizado do GNOME que roda `kvm-switch` com o pedido. Eles continuam valendo com o app fechado e aparecem em Configurações → Teclado → Atalhos personalizados.
 - Uma troca direta roda sem abrir janela, em cerca de 0,25 s. O seletor e os avisos abrem o app na hora, o que leva cerca de 0,5 s.
-- O app encerra quando a última janela fecha (é assim que o GPUI funciona no Linux). Abrir "KVM Switch" de novo mostra a configuração; Ctrl+Q encerra.
+- O app encerra quando a última janela fecha (é assim que o GPUI funciona no Linux). Abrir "KVM Switch" com ele já aberto pergunta se é para encerrar o aberto e abrir de novo (veja [Um app por vez](#um-app-por-vez)); Ctrl+Q pergunta antes de encerrar.
 - O ícone na barra é um processo à parte e pequeno, `kvm-switch tray`, que nunca abre janela: cada item do menu roda `kvm-switch` com o pedido, como um atalho. O menu acompanha o `config.json` (confere a cada 2 s). Só um ícone por sessão; ele abre sozinho no login por `~/.config/autostart/kvm-switch-tray.desktop`.
 
 Pela linha de comando, com o app aberto ou fechado:
@@ -73,7 +73,7 @@ kvm-switch switch 27          # vai para a entrada 27 (o valor de `input` no con
 kvm-switch edge direita       # manda teclado e mouse para o vizinho da direita (esquerda, direita, cima, baixo)
 kvm-switch switcher-next      # abre o seletor ou avança nele
 kvm-switch switcher-previous
-kvm-switch quit               # encerra o app aberto, se houver
+kvm-switch quit               # pergunta e, com o sim, encerra o app aberto (sai com 2 se a resposta for não)
 kvm-switch tray               # põe o ícone na barra (só no Linux)
 ```
 
@@ -133,9 +133,17 @@ Ele só roda na `main` limpa e igual à `origin/main`, e recusa uma tag que já 
    - **Atalho:** clique e pressione a combinação. Precisa de Ctrl, Alt ou ⌘ (Super no Linux e tecla Windows no Windows). Backspace remove, Esc cancela.
    - **Ir:** troca agora, sem atalho.
 4. **Atalho do seletor:** a combinação que abre o painel central, só com os destinos ativos. Sem nenhum ativo, ele não abre.
-5. **Ícone na barra** (🖥, na barra superior do GNOME, na barra de menus do macOS ou na área de notificação do Windows): **Abrir configuração**, um **Ir para …** por destino ativo (o deste computador marcado "aqui"; só com o modo Monitor compartilhado ligado) e **Encerrar**, que fecha o app e o ícone. No GNOME o clique simples abre o menu e o duplo abre a configuração.
+5. **Ícone na barra** (🖥, na barra superior do GNOME, na barra de menus do macOS ou na área de notificação do Windows): **Abrir configuração**, um **Ir para …** por destino ativo (o deste computador marcado "aqui"; só com o modo Monitor compartilhado ligado) e **Encerrar**, que pergunta antes e, com o sim, fecha o app e o ícone. No GNOME o clique simples abre o menu e o duplo abre a configuração.
 
 Se o sistema recusar um atalho (já em uso por outro app, por exemplo), o motivo aparece em vermelho na janela. No GNOME isso vale para os atalhos personalizados de outros programas; uma combinação que o próprio GNOME usa (Super+Alt+←, por exemplo) nem chega à janela para ser gravada.
+
+### Um app por vez
+
+Só um KVM Switch roda por sessão, em todos os sistemas: dois vigiando a mesma borda trocariam o canal duas vezes. O app aberto atende as outras execuções do programa por um socket do usuário (Linux e macOS) ou por um named pipe (Windows).
+
+- **Abrir o app com ele já aberto** (ícone, menu Iniciar ou Aplicativos, `kvm-switch` sem argumentos) pergunta "O KVM Switch já está aberto": **Encerrar e abrir de novo** encerra o aberto sem perguntar mais nada e abre este no lugar; **Mostrar o aberto** (ou Esc) só traz a janela do aberto. No macOS, abrir pelo Dock ou pelo Finder com o app aberto só mostra a janela, porque o próprio sistema não inicia outra cópia; a pergunta aparece quando o executável roda direto.
+- **Atalhos, bordas e pedidos da linha de comando** (`switch`, `edge`, `switcher-next`, `start`…) vão direto para o app aberto, sem perguntar.
+- **Encerrar** pergunta antes: ⌘Q ou Ctrl+Q, **Encerrar** no ícone da barra e `kvm-switch quit`. Enter confirma e Esc cancela. No Linux, se a resposta for não, o ícone da barra continua lá.
 
 ### O que acontece numa troca
 
@@ -189,13 +197,13 @@ flowchart LR
 | `src/adapters/linux/gnome.rs` | `Hotkeys` pelos atalhos personalizados do GNOME |
 | `src/adapters/linux/edges.rs` | `EdgeSensor`: liga a extensão do GNOME e diz à janela se ela ainda não está ativa |
 | `linux/gnome-extension/` | A extensão do GNOME Shell (45+) com as barreiras de pressão nas bordas externas, que roda `kvm-switch edge <lado>` |
-| `src/adapters/linux/instance.rs` | Linha de comando e entrega do pedido ao app já aberto, por um socket |
+| `src/adapters/instance.rs` | Um app por sessão: decide se a execução vira o app, entrega o pedido ao aberto ou pergunta; o transporte é `instance/socket.rs` (socket Unix no Linux e no macOS) ou `instance/pipe.rs` (named pipe no Windows) |
 | `src/adapters/linux/tray.rs` | `kvm-switch tray`: o ícone na barra, num processo à parte e sem GPUI |
 | `src/adapters/windows.rs` | `Monitor` por DDC/CI, `Peripherals` por HIDAPI, atalhos globais, ícone na área de notificação e o cursor e os monitores pelo Win32 |
-| `src/request.rs` | Os pedidos em texto (`open`, `switch 27`, `edge direita`, `quit`…), iguais na linha de comando, no socket, no menu do ícone e na extensão do GNOME |
+| `src/request.rs` | Os pedidos em texto (`open`, `switch 27`, `edge direita`, `quit`…), iguais na linha de comando, no socket ou pipe, no menu do ícone e na extensão do GNOME |
 | `src/tray.rs` | O menu do ícone na barra, montado da configuração |
 | `src/app.rs` | Estado do app: configuração, registro de atalhos, seletor, travessias pela borda, avisos |
-| `src/ui/` | Janela de configuração e painéis centrais |
+| `src/ui/` | Janela de configuração e painéis centrais (seletor, avisos e perguntas) |
 | `src/config.rs` | Leitura e gravação do JSON |
 
 As portas:
