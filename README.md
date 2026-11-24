@@ -109,7 +109,7 @@ O workflow de release gera e publica o instalador junto com o executável avulso
 
 ### Releases
 
-Cada tag `v*` enviada ao GitHub dispara `.github/workflows/release.yml`, que gera o `.dmg` (macOS, Apple Silicon), o `.deb` (Ubuntu 24.04, amd64) e o executável `.exe` (Windows x64) e publica os três numa release. O `release.sh` faz a tag:
+Cada tag `v*` enviada ao GitHub dispara `.github/workflows/release.yml`, que gera o `.dmg` (macOS, Apple Silicon), o `.deb` (Ubuntu 24.04, amd64) e o executável `.exe` (Windows x64) e publica os três numa release. Em cada pull request e pelo botão **Run workflow** da aba Actions o mesmo workflow só gera os builds, sem publicar, para conferir antes da tag. O `release.sh` faz a tag:
 
 ```sh
 ./release.sh 0.2.0   # põe 0.2.0 no Cargo.toml e no Cargo.lock, commita, cria a tag v0.2.0 e envia

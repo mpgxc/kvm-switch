@@ -126,7 +126,7 @@ App CLI: `kvm-switch [open | switch <decimal VCP> | edge <esquerda|direita|cima|
 - `linux/70-logi-bolt.rules`: an optional udev `uaccess` rule for the receiver's hidraw device.
 
 ## Runtime/Tooling Preferences
-- Rust edition 2024, Cargo only. There is no `build.rs`, toolchain file or `.cargo/config`. The only CI is the tag-triggered release workflow; it runs no clippy, and `cargo test` only in the Windows job.
+- Rust edition 2024, Cargo only. There is no `build.rs`, toolchain file or `.cargo/config`. The only CI is `.github/workflows/release.yml`: it builds the `.dmg`, `.deb` and Windows installer on every pull request and on manual runs (`workflow_dispatch`), and also publishes the GitHub release on a `v*` tag. It runs no clippy, and `cargo test` only in the Windows job.
 - Each OS builds natively for releases. Code under `cfg(target_os)` compiles only on its own target, but other targets can be checked from a Mac:
   - Windows: `cargo install cargo-xwin`, `rustup component add llvm-tools`, put a `llvm-lib` symlink to the toolchain's `llvm-ar` on `PATH`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` (check only; tests need Windows).
   - Linux: Docker `rust:1` with the GPUI dev packages from `linux/install.sh`, the repo mounted and a separate `CARGO_TARGET_DIR`; `cargo test` and clippy run there.

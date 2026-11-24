@@ -1,10 +1,13 @@
-# Publica uma release com o .dmg (macOS, Apple Silicon), .deb (Ubuntu, amd64) e instalador/.exe (Windows x64)
-# a cada tag v*: `git tag v0.1.0 && git push origin v0.1.0`.
+# Gera o .dmg (macOS, Apple Silicon), o .deb (Ubuntu, amd64) e o instalador/.exe (Windows x64).
+# A cada tag v* (`./release.sh X.Y.Z`) também publica a release. Em pull requests e pelo
+# botão "Run workflow" só gera os builds, para conferir que eles saem antes da tag.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -60,6 +63,7 @@ jobs:
 
   release:
     needs: [macos, linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
