@@ -15,7 +15,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use windows_sys::Win32::{
-    Foundation::{ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GetLastError, INVALID_HANDLE_VALUE},
+    Foundation::{ERROR_PIPE_BUSY, INVALID_HANDLE_VALUE},
     Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_INBOUND},
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
@@ -51,9 +51,7 @@ impl Listener {
         thread::spawn(move || {
             let Listener { name, mut pipe } = self;
             loop {
-                if !wait_for_client(&pipe) {
-                    break;
-                }
+                wait_for_client(&pipe);
                 // A próxima instância nasce antes desta fechar: no intervalo, quem
                 // procurasse o app acharia o pipe vazio e abriria outro.
                 let Ok(next) = create(&name, false) else {
@@ -85,6 +83,9 @@ fn send_to(name: &str, line: &str) -> Result<bool> {
         match OpenOptions::new().write(true).open(name) {
             Ok(mut running) => {
                 writeln!(running, "{line}")?;
+                // Num pipe, esperar o esvaziamento é esperar o app ler a linha. Fechar
+                // antes disso pode descartá-la. Melhor esforço: a linha já foi escrita.
+                running.sync_all().ok();
                 return Ok(true);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -130,13 +131,13 @@ fn create(name: &str, first: bool) -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) })
 }
 
-/// Espera alguém abrir esta instância. `false` se o pipe deixou de funcionar.
-fn wait_for_client(pipe: &OwnedHandle) -> bool {
+/// Espera alguém abrir esta instância. O resultado não importa: quem escreveu e já
+/// fechou (`ERROR_NO_DATA`) ainda deixa a linha para ler, e uma instância que não
+/// conectou só devolve uma leitura vazia. Desistir aqui deixaria o app sem pipe.
+fn wait_for_client(pipe: &OwnedHandle) {
     use std::os::windows::io::AsRawHandle as _;
     // SAFETY: o handle é válido enquanto `pipe` existir; sem OVERLAPPED a chamada bloqueia.
-    let connected = unsafe { ConnectNamedPipe(pipe.as_raw_handle(), ptr::null_mut()) } != 0;
-    // SAFETY: sem argumentos; lê o erro da chamada acima nesta thread.
-    connected || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED
+    unsafe { ConnectNamedPipe(pipe.as_raw_handle(), ptr::null_mut()) };
 }
 
 /// Um pipe por usuário: o mesmo Windows pode ter mais de uma pessoa logada.
