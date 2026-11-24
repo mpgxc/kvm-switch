@@ -1,4 +1,4 @@
-# Publica uma release com o .dmg (macOS, Apple Silicon) e o .deb (Ubuntu, amd64)
+# Publica uma release com o .dmg (macOS, Apple Silicon), .deb (Ubuntu, amd64) e instalador/.exe (Windows x64)
 # a cada tag v*: `git tag v0.1.0 && git push origin v0.1.0`.
 name: release
 
@@ -41,13 +41,30 @@ jobs:
           name: linux
           path: target/release/*.deb
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: choco install innosetup --no-progress -y
+      - run: cargo test --locked
+      - run: .\windows\build-installer.ps1
+      # Os dois .exe na mesma pasta: com caminhos diferentes o artifact guarda as
+      # subpastas e o `*.exe` do job release não os encontra.
+      - run: Copy-Item target\windows-installer-build\release\kvm-switch.exe target\release\
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/*.exe
+
   release:
-    needs: [macos, linux]
+    needs: [macos, linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - run: gh release create "$GITHUB_REF_NAME" *.dmg *.deb --repo "$GITHUB_REPOSITORY" --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" *.dmg *.deb *.exe --repo "$GITHUB_REPOSITORY" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

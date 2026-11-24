@@ -378,11 +378,12 @@ impl Kvm {
     }
 }
 
-// A geometria do cursor só existe no macOS: no GNOME quem vê a borda é a extensão.
+// A geometria do cursor só existe onde o app lê o cursor (macOS e Windows): no
+// GNOME quem vê a borda é a extensão.
 
 /// Retângulo de uma tela no espaço global, com y crescendo para baixo (como no
 /// macOS e no GNOME).
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
     pub x: f64,
@@ -391,7 +392,7 @@ pub struct Rect {
     pub height: f64,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 impl Rect {
     fn contains(&self, x: f64, y: f64) -> bool {
         x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
@@ -400,15 +401,15 @@ impl Rect {
 
 /// Distância da borda, em pontos, em que o cursor conta como encostado: ele para
 /// no último ponto dentro da tela, um antes do limite.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 const EDGE_TOLERANCE: f64 = 1.0;
 /// Perto dos cantos nada dispara, para não brigar com os cantos ativos do sistema.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 const CORNER: f64 = 8.0;
 
 /// O lado da área de trabalho em que o cursor está encostado, se estiver. Só
 /// contam as bordas externas: entre dois monitores do mesmo PC o cursor passa.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub fn edge_at(x: f64, y: f64, screens: &[Rect]) -> Option<Side> {
     let screen = screens.iter().find(|screen| screen.contains(x, y))?;
     let (left, top) = (screen.x, screen.y);
@@ -435,13 +436,13 @@ pub fn edge_at(x: f64, y: f64, screens: &[Rect]) -> Option<Side> {
 /// Decide quando o cursor encostado numa borda atravessa. A borda só vale
 /// depois que o cursor saiu dela: quando teclado e mouse voltam, o cursor ainda
 /// está parado na borda por onde saiu e não pode mandá-los embora de novo.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 #[derive(Debug, Default)]
 pub struct EdgeWatch {
     armed: bool,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 impl EdgeWatch {
     /// `at` é a borda em que o cursor está agora; `sides`, os lados com vizinho.
     /// Devolve o lado por onde atravessar.

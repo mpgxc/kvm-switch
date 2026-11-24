@@ -143,6 +143,11 @@ pub struct SettingsView {
 impl SettingsView {
     fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        #[cfg(target_os = "windows")]
+        window.on_window_should_close(cx, |window, _| {
+            window.minimize_window();
+            false
+        });
         // A página tem layout fixo e não deve ser maximizada. O menu da janela, Super+↑ e
         // arrastar até o topo da tela pedem ao compositor sem passar pelo app, então a janela
         // volta ao tamanho de antes assim que chega maximizada.
@@ -450,14 +455,24 @@ impl SettingsView {
     /// Com as bordas desligadas fica apagado, mas continua editável.
     fn edges_board(&self, edges: &Edges, cx: &Context<Self>) -> Div {
         let empty = || div().w(px(EDGE_CELL_WIDTH));
-        // No macOS a barra de menus e o Dock ficam colados nessas bordas: encostar nelas para
-        // usá-los já atravessa.
-        let warning = |side: Side, text: &'static str| {
-            let shown = cfg!(target_os = "macos") && edges.neighbor(side).channel.is_some();
+        // No macOS a barra de menus e o Dock, e no Windows a barra de tarefas, ficam colados
+        // nessas bordas: encostar nelas para usá-los já atravessa. No GNOME é preciso empurrar.
+        let warning = |side: Side, text: Option<&'static str>| {
+            let shown = edges.neighbor(side).channel.is_some();
             empty()
                 .text_xs()
                 .text_color(rgb(theme::MUTED))
-                .when(shown, |cell| cell.child(text))
+                .when_some(text.filter(|_| shown), |cell, text| cell.child(text))
+        };
+        let (top_warning, bottom_warning) = if cfg!(target_os = "macos") {
+            (
+                Some("⚠ Encostar na barra de menus já leva teclado e mouse."),
+                Some("⚠ Encostar no Dock já leva teclado e mouse."),
+            )
+        } else if cfg!(target_os = "windows") {
+            (None, Some("⚠ Encostar na barra de tarefas já leva teclado e mouse."))
+        } else {
+            (None, None)
         };
         let line = |cells: [Div; 3]| div().flex().items_center().gap_3().children(cells);
         let this_pc = div()
@@ -479,10 +494,7 @@ impl SettingsView {
             .child(line([
                 empty(),
                 self.edge_cell(Side::Top, &edges.top, cx),
-                warning(
-                    Side::Top,
-                    "⚠ Encostar na barra de menus já leva teclado e mouse.",
-                ),
+                warning(Side::Top, top_warning),
             ]))
             .child(line([
                 self.edge_cell(Side::Left, &edges.left, cx),
@@ -492,7 +504,7 @@ impl SettingsView {
             .child(line([
                 empty(),
                 self.edge_cell(Side::Bottom, &edges.bottom, cx),
-                warning(Side::Bottom, "⚠ Encostar no Dock já leva teclado e mouse."),
+                warning(Side::Bottom, bottom_warning),
             ]))
     }
 

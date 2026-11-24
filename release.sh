@@ -2,7 +2,7 @@
 # Publica uma versão nova: ./release.sh 0.2.0
 # Põe a versão no Cargo.toml e no Cargo.lock, commita, cria a tag v<versão> e envia
 # a main e a tag juntas. O push da tag dispara .github/workflows/release.yml, que
-# gera o .dmg e o .deb e cria a release no GitHub.
+# gera o .dmg, o .deb e os .exe do Windows e cria a release no GitHub.
 # Sem argumento, publica a versão que já está no Cargo.toml.
 set -eu
 cd "$(dirname "$0")"

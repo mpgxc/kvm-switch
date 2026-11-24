@@ -3,6 +3,8 @@
 //! `domain` tem as regras, `ports` as interfaces que cada sistema precisa
 //! fornecer, `adapters` as implementações por sistema e `ui` as janelas.
 
+#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
+
 mod adapters;
 mod app;
 mod config;
@@ -65,8 +67,8 @@ fn main() {
     }
     let app = Application::new();
     // No macOS fechar a janela não encerra o app, e clicar no ícone do Dock abre a
-    // configuração de novo. No Linux o GPUI encerra o app com a última janela, e
-    // abrir o programa outra vez mostra a configuração (veja `first_action`).
+    // configuração de novo. No Windows, o ícone na área de notificação mantém o app
+    // aberto quando a janela fecha. No Linux o GPUI encerra com a última janela.
     app.on_reopen(settings::open);
     app.run(move |cx| {
         if let Err(error) = start(cx, first, notice) {

@@ -8,8 +8,6 @@ use std::{
     path::Path,
     str::FromStr,
     sync::{Arc, Mutex},
-    thread,
-    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail};
@@ -28,8 +26,8 @@ use tray_icon::{TrayIcon, TrayIconBuilder, menu::MenuEvent};
 
 use super::{mccs::capability_inputs, run};
 use crate::{
-    domain::{Config, EdgeWatch, InputCode, Rect, Side, edge_at},
-    ports::{Action, EdgeSensor, Hotkeys, Monitor, StatusMenu},
+    domain::{Config, InputCode, Rect},
+    ports::{Action, Hotkeys, Monitor, StatusMenu},
     request, tray,
 };
 
@@ -164,52 +162,9 @@ fn parse(shortcut: &str) -> Result<HotKey> {
     Ok(HotKey::from_str(shortcut)?)
 }
 
-/// De quanto em quanto tempo o cursor é consultado com o modo Bordas ligado.
-const EDGE_POLL: Duration = Duration::from_millis(20);
-
-/// Vigia o cursor numa thread própria. Só consulta a posição, sem ouvir eventos,
-/// então não pede a permissão de Monitoramento de Entrada.
-pub struct MacEdges {
-    sides: Arc<Mutex<Vec<Side>>>,
-}
-
-impl MacEdges {
-    pub fn new(actions: Sender<Action>) -> Self {
-        let sides: Arc<Mutex<Vec<Side>>> = Arc::default();
-        let watched = sides.clone();
-        thread::spawn(move || {
-            let mut watch = EdgeWatch::default();
-            loop {
-                thread::sleep(EDGE_POLL);
-                let sides = watched.lock().expect("lock das bordas envenenado").clone();
-                if sides.is_empty() {
-                    // Ao religar, o cursor pode estar parado numa borda: começa desarmado.
-                    watch = EdgeWatch::default();
-                    continue;
-                }
-                let Some((x, y, screens)) = cursor_and_screens() else {
-                    continue;
-                };
-                if let Some(side) = watch.observe(edge_at(x, y, &screens), &sides) {
-                    // O receptor só some quando o app está encerrando.
-                    actions.try_send(Action::CrossEdge(side)).ok();
-                }
-            }
-        });
-        Self { sides }
-    }
-}
-
-impl EdgeSensor for MacEdges {
-    fn watch(&mut self, sides: &[Side]) -> Option<String> {
-        *self.sides.lock().expect("lock das bordas envenenado") = sides.to_vec();
-        None
-    }
-}
-
 /// Posição do cursor e retângulos das telas ativas, no espaço global do Quartz
 /// (origem no canto de cima da tela principal, y para baixo).
-fn cursor_and_screens() -> Option<(f64, f64, Vec<Rect>)> {
+pub fn cursor_and_screens() -> Option<(f64, f64, Vec<Rect>)> {
     let at = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .and_then(CGEvent::new)
         .ok()?
