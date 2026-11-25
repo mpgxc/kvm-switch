@@ -16,9 +16,9 @@
 - Lints: nada de `.unwrap()`, `todo!`, `dbg!`; `#[allow]`/`#[expect]` com `reason`; todo `unsafe` com `// SAFETY:`.
 - Erros com `anyhow` + `.context()`; mostrados com `format!("{error:#}")`.
 - Campos novos de `Config` com `#[serde(default)]` e teste de arquivo antigo.
-- Porta TCP **24811**. Limite **16 MiB** por conteúdo. Janela de relógio e de nonces **30 s**. Conectar em **300 ms**; ler/escrever em **5 s**. Aviso de recusa no máximo **1 por minuto**.
+- Porta TCP **24811**. Limite **16 MiB** por conteúdo. Desafio de **16 bytes** por conexão. Conectar em **300 ms**; receber o desafio em **300 ms**; ler/escrever em **5 s**. Aviso de recusa no máximo **1 por minuto**.
 - Chave: **32 bytes**, guardada em **base64** (44 caracteres) em `config.json`.
-- Quadro: `"KVMC"` + versão `1` (u8) + nonce (12 bytes) + tamanho (u32 big-endian) + cifrado. Claro: hora (u64 big-endian, ms Unix) + tipo (u8: `1` texto UTF-8, `2` PNG) + dados. Dado associado: os 5 primeiros bytes.
+- Conexão: quem recebe manda primeiro o desafio (16 bytes de `SystemRandom`, novo por conexão); depois quem envia manda o quadro. Quadro: `"KVMC"` + versão `1` (u8) + nonce (12 bytes) + tamanho (u32 big-endian) + cifrado. Claro: tipo (u8: `1` texto UTF-8, `2` PNG) + dados. Dado associado: `"KVMC"` + versão + o desafio (21 bytes). Sem hora e sem memória de nonces: o desafio impede repetir um quadro.
 - Só crates que já estão no `Cargo.lock`, nas versões dele. Depois de mexer no `Cargo.toml`, `cargo tree -d` não pode ganhar duplicata nova.
 - A travessia nunca espera o envio e nunca toca o monitor.
 - Verificação por sistema: macOS `cargo test && cargo clippy --all-targets -- -D warnings`; Windows `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` (como em `AGENTS.md`); Linux no Docker `rust:1` descrito em `AGENTS.md`, `cargo test` + o clippy.
@@ -26,7 +26,7 @@
 
 ## Review Focus
 
-1. **Vizinho fora do ar ou `.local` que não resolve:** teclado e mouse passam na hora, e `kvm-switch edge` sem janela sai em até ~5,3 s. Teste: `send_to_a_closed_port_fails_fast` (Task 3) e o prazo em `cross_without_window` (Task 7).
+1. **Vizinho fora do ar ou `.local` que não resolve:** teclado e mouse passam na hora, e `kvm-switch edge` sem janela sai em até ~5,6 s. Teste: `send_to_a_closed_port_fails_fast` (Task 3) e o prazo em `cross_without_window` (Task 7).
 2. **Acentos, emoji e `\r\n`:** chegam byte a byte iguais. Testes: `seal_then_open_returns_the_same_text` (Task 2), `text_written_reads_back_identical` (Task 4).
 3. **Chave colada de um chat, com espaço ou quebra de linha:** é aceita. Testes: `key_parse_trims_whitespace` (Task 2), `pasting_a_key_replaces_it` (Task 8).
 4. **Lixo ou cabeçalho gigante na porta** (scanner da rede, outro programa): nada é gravado, nada é alocado além do limite, e a escuta continua atendendo. Teste: `an_oversized_header_is_dropped_and_the_listener_keeps_serving` (Task 3).
@@ -141,7 +141,7 @@ git commit -m "add the neighbor address and the clipboard mode to the config"
 ```rust
 pub const PORT: u16 = 24811;
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
-pub const WINDOW_MS: u64 = 30_000;
+pub const CHALLENGE_LEN: usize = 16;
 pub const HEADER_LEN: usize = 21; // "KVMC" + versão + nonce + tamanho
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,47 +156,46 @@ impl Key {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Refusal { NotOurs, Version, TooBig, WrongKey, Clock, Replay, Kind }
+pub enum Refusal { NotOurs, Version, TooBig, WrongKey, Kind }
 impl Refusal {
-    /// Só `WrongKey` e `Clock` merecem aviso a quem está na frente do PC.
+    /// Só `WrongKey` merece aviso a quem está na frente do PC.
     pub fn notice(self) -> Option<&'static str>;
 }
 
+/// 16 bytes de `SystemRandom`, um por conexão recebida.
+pub fn new_challenge() -> [u8; CHALLENGE_LEN];
 /// Erro quando o conteúdo passa de `MAX_BYTES`.
-pub fn seal(clip: &Clip, key: &Key, now_ms: u64) -> anyhow::Result<Vec<u8>>;
+pub fn seal(clip: &Clip, key: &Key, challenge: &[u8; CHALLENGE_LEN]) -> anyhow::Result<Vec<u8>>;
 /// Confere "KVMC", versão 1 e o tamanho antes de alguém alocar o corpo.
 pub fn body_len(header: &[u8; HEADER_LEN]) -> Result<usize, Refusal>;
-pub fn open(header: &[u8; HEADER_LEN], body: Vec<u8>, key: &Key, now_ms: u64, seen: &mut ReplayGuard) -> Result<Clip, Refusal>;
+pub fn open(header: &[u8; HEADER_LEN], body: Vec<u8>, key: &Key, challenge: &[u8; CHALLENGE_LEN]) -> Result<Clip, Refusal>;
 
-#[derive(Default)] pub struct ReplayGuard { /* nonce -> hora */ }
 #[derive(Default)] pub struct NoticeGate { /* último aviso */ }
 impl NoticeGate { pub fn allow(&mut self, now: std::time::Instant) -> bool; } // 1 por 60 s
 
 /// Grava só se o que chegou é diferente do que já está copiado.
 pub fn should_write(current: Option<&Clip>, incoming: &Clip) -> bool;
-pub fn now_ms() -> u64; // SystemTime desde UNIX_EPOCH
 ```
-- Ordem em `open`: decifrar (`WrongKey`, que também cobre quadro adulterado) → hora fora de ±`WINDOW_MS` (`Clock`) → nonce visto na janela (`Replay`; só registra nonce depois de decifrar) → tipo desconhecido ou texto que não é UTF-8 (`Kind`). `ReplayGuard` esquece nonces com mais de `WINDOW_MS`.
-- `body_len`: magia errada → `NotOurs`; versão ≠ 1 → `Version`; tamanho > `MAX_BYTES + 9 + 16` → `TooBig`.
-- Textos de `notice`: `WrongKey` → "Chegou uma área de transferência com outra chave: confira a chave nos dois PCs"; `Clock` → "Chegou uma área de transferência com o relógio fora de hora: confira a hora dos dois PCs".
+- Ordem em `open`: decifrar (`WrongKey`, que também cobre quadro adulterado e quadro feito para outro desafio) → tipo desconhecido ou texto que não é UTF-8 (`Kind`).
+- `body_len`: magia errada → `NotOurs`; versão ≠ 1 → `Version`; tamanho > `MAX_BYTES + 1 + 16` → `TooBig`.
+- Texto de `notice`: `WrongKey` → "Chegou uma área de transferência com outra chave: confira a chave nos dois PCs".
 
-- [ ] **Step 1: Escrever os testes que falham** (em `src/clip.rs`, `mod tests`; um helper de teste `frame(…)` separa cabeçalho e corpo do resultado de `seal`, e um `seal_kind(kind: u8, data, key, now)` privado monta quadros com tipo arbitrário)
+- [ ] **Step 1: Escrever os testes que falham** (em `src/clip.rs`, `mod tests`; um helper de teste `frame(…)` separa cabeçalho e corpo do resultado de `seal`, e um `seal_kind(kind: u8, data, key, challenge)` privado monta quadros com tipo arbitrário)
 
 ```rust
 seal_then_open_returns_the_same_text      // Clip::Text("ação 🚀\r\nfim") volta igual
 seal_then_open_returns_the_same_png       // Clip::Png(vec![0x89, b'P', b'N', b'G', 1, 2, 3])
 another_key_is_refused_as_wrong_key
 a_flipped_byte_is_refused_as_wrong_key    // último byte do corpo trocado
-a_frame_31_seconds_off_is_refused_as_clock // now - 31_000 e now + 31_000
-the_same_frame_twice_is_refused_as_replay // 2º open com o mesmo ReplayGuard → Err(Replay)
-replay_guard_forgets_after_the_window     // o mesmo nonce é aceito de novo 31 s depois (direto no guard)
-body_len_refuses_unknown_magic_version_and_oversize // "XXXX" → NotOurs; versão 2 → Version; MAX_BYTES + 26 → TooBig
+a_frame_for_another_challenge_is_refused_as_wrong_key // seal com o desafio A, open com o desafio B → Err(WrongKey)
+a_tampered_nonce_is_refused_as_wrong_key  // trocar um byte do nonce no cabeçalho → Err(WrongKey)
+body_len_refuses_unknown_magic_version_and_oversize // "XXXX" → NotOurs; versão 2 → Version; MAX_BYTES + 17 → Ok; MAX_BYTES + 18 → TooBig
 seal_refuses_a_clip_over_the_limit        // Clip::Png(vec![0; MAX_BYTES + 1]) → Err
 an_unknown_kind_is_refused                // seal_kind(3, …) → Err(Kind); seal_kind(1, [0xff]) → Err(Kind)
 generated_keys_parse                      // Key::parse(&Key::generate()).is_ok(); generate().len() == 44
 key_parse_trims_whitespace                // Key::parse(&format!("  {k}\n")).is_ok()
 key_parse_refuses_wrong_length_and_garbage // base64 de 16 bytes → Err; "não é base64" → Err; "" → Err
-only_wrong_key_and_clock_have_a_notice
+only_wrong_key_has_a_notice
 notice_gate_allows_one_per_minute         // t: true; t+59s: false; t+60s: true
 should_write_skips_equal_content          // (Some(Text("a")), Text("a")) → false; (None, Text("a")) → true;
                                           // (Some(Text("PNG")), Png(b"PNG")) → true
@@ -231,7 +230,7 @@ git commit -m "add the clipboard frame: content, key, sealing and refusals"
 - Modify: `src/adapters.rs` (`mod net;` e `pub use net::{ClipListener, listen, share, SEND_DEADLINE};`)
 
 **Interfaces:**
-- Consumes: `Clip`, `Key`, `seal`, `body_len`, `open`, `ReplayGuard`, `NoticeGate`, `should_write`, `now_ms`, `PORT`, `HEADER_LEN` (Task 2).
+- Consumes: `Clip`, `Key`, `new_challenge`, `seal`, `body_len`, `open`, `NoticeGate`, `should_write`, `PORT`, `HEADER_LEN`, `CHALLENGE_LEN` (Task 2).
 - Produces:
 ```rust
 // ports.rs
@@ -246,10 +245,10 @@ pub trait Clipboard: Send + Sync {
 // adapters/net.rs
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 pub const IO_TIMEOUT: Duration = Duration::from_secs(5);
-/// O máximo que alguém espera um envio: conectar + escrever.
-pub const SEND_DEADLINE: Duration = Duration::from_millis(5_300);
-/// `address` é "host" (usa `PORT`) ou "host:porta". Uma conexão, só de ida.
-pub fn send(address: &str, frame: &[u8]) -> Result<()>;
+/// O máximo que alguém espera um envio: conectar + desafio + escrever.
+pub const SEND_DEADLINE: Duration = Duration::from_millis(5_600);
+/// `address` é "host" (usa `PORT`) ou "host:porta". Uma conexão: lê o desafio, cifra amarrado a ele e escreve o quadro.
+pub fn send(address: &str, key: &Key, clip: &Clip) -> Result<()>;
 /// Lê a área de transferência e envia; sem texto nem imagem, não faz nada.
 pub fn share(clipboard: &dyn Clipboard, address: &str, key: &Key) -> Result<()>;
 /// Escuta até ser descartado. `notify` recebe os avisos de recusa, já limitados pelo `NoticeGate`.
@@ -258,8 +257,8 @@ pub struct ClipListener { /* thread + parada */ }
 impl ClipListener { pub fn local_addr(&self) -> SocketAddr; }
 impl Drop for ClipListener { /* para a thread e solta a porta antes de voltar */ }
 ```
-- Escuta: uma conexão por vez, numa thread; prazo `IO_TIMEOUT` para ler; cabeçalho → `body_len` → corpo → `open`. `Ok(clip)` e `should_write(clipboard.read().ok().flatten().as_ref(), &clip)` → `write` (erro vai para o stderr). `Err(refusal)` com `notice()` e `NoticeGate::allow` → `notify`. Qualquer erro de uma conexão nunca derruba a escuta.
-- `send`: resolve com `ToSocketAddrs`, tenta cada endereço com `connect_timeout(CONNECT_TIMEOUT)`, escreve com `set_write_timeout(IO_TIMEOUT)`.
+- Escuta: uma conexão por vez, numa thread. Ao aceitar, manda `new_challenge()`; depois, com prazo `IO_TIMEOUT` para ler: cabeçalho → `body_len` → corpo → `open` com aquele desafio. `Ok(clip)` e `should_write(clipboard.read().ok().flatten().as_ref(), &clip)` → `write` (erro vai para o stderr). `Err(refusal)` com `notice()` e `NoticeGate::allow` → `notify`. Qualquer erro de uma conexão nunca derruba a escuta.
+- `send`: resolve com `ToSocketAddrs`, tenta cada endereço com `connect_timeout(CONNECT_TIMEOUT)`, lê o desafio com `set_read_timeout(CONNECT_TIMEOUT)`, escreve com `set_write_timeout(IO_TIMEOUT)`.
 
 - [ ] **Step 1: Escrever os testes que falham** (em `net.rs`; `FakeClipboard { current: Mutex<Option<Clip>>, writes: Mutex<usize> }`; avisos num `Arc<Mutex<Vec<String>>>`; tudo em `127.0.0.1:0`; um helper espera até 2 s por uma condição)
 
@@ -267,7 +266,7 @@ impl Drop for ClipListener { /* para a thread e solta a porta antes de voltar */
 text_crosses_to_the_listener_clipboard        // share(Text("ação")) → current == Some(Text("ação")), writes == 1
 png_crosses_to_the_listener_clipboard
 a_wrong_key_writes_nothing_and_notices_once   // dois envios com outra chave → writes == 0, avisos == 1
-the_same_frame_twice_writes_once              // os mesmos bytes de seal mandados duas vezes por TcpStream → writes == 1
+a_replayed_frame_writes_nothing              // TcpStream lê o desafio, manda um quadro cifrado para outro desafio → writes == 0
 equal_content_is_not_written_again            // current já é Text("a"); envia Text("a") → writes == 0
 an_oversized_header_is_dropped_and_the_listener_keeps_serving
     // TcpStream manda "KVMC", 1, 12 zeros, u32::MAX e fecha; depois share(Text("ok")) → current == Some(Text("ok"))
@@ -573,7 +572,7 @@ git commit -m "configure the clipboard sharing, neighbor addresses and the key i
   - Windows: a primeira escuta abre o pedido do firewall; aceitar em "Redes privadas".
   - macOS: o firewall, se ligado, pergunta na primeira escuta.
   - Ubuntu com `ufw` ligado: `sudo ufw allow 24811/tcp`.
-  - Os relógios precisam estar certos (NTP).
+  - Quem recebe manda um desafio a cada conexão: um quadro capturado na rede não serve para gravar de novo.
   - Senhas copiadas também vão para o vizinho, cifradas, e podem ficar no histórico da área de transferência dele.
 
 - [ ] **Step 2: Atualizar o `AGENTS.md`**

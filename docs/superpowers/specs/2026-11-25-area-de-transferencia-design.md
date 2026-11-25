@@ -65,11 +65,12 @@ que recebe os periféricos não percebe a troca de canal. É o mesmo modelo do D
 cursor na borda → AppState::cross / cross_without_window
                    ├─ Kvm::cross (Bolt, como hoje)
                    └─ em paralelo, outra thread: lê o conteúdo → envia ao vizinho
-vizinho: escuta → confere chave, hora e nonce → igual ao atual? nada : grava
+vizinho: escuta → manda um desafio → confere chave e desafio → igual ao atual? nada : grava
 ```
 
 - O envio roda em `std::thread` própria, iniciado junto com `Kvm::cross`. Prazo de
-  300 ms para conectar e 5 s para escrever (uma imagem de 16 MiB no Wi-Fi).
+  300 ms para conectar, 300 ms para receber o desafio e 5 s para escrever (uma imagem
+  de 16 MiB no Wi-Fi).
 - **Sem memória no lado de quem envia:** toda travessia envia o conteúdo atual. Quem
   recebe compara com o que já tem (mesmo tipo e mesmos bytes, lidos pela própria
   porta `Copia`) e, se for igual, não grava. Isso protege a cópia original na volta ao
@@ -82,7 +83,7 @@ vizinho: escuta → confere chave, hora e nonce → igual ao atual? nada : grava
   nome do arquivo copiado), essa forma vai.
 - `cross_without_window` (a extensão do GNOME rodando `kvm-switch edge` com o app
   fechado) também envia, e espera o envio terminar antes de sair (no pior caso
-  ~5,3 s, durante os quais a extensão ignora novos empurrões; a pausa dela já é 1 s).
+  ~5,6 s, durante os quais a extensão ignora novos empurrões; a pausa dela já é 1 s).
 
 ### Conteúdo
 
@@ -102,11 +103,11 @@ pub enum Conteudo {
 
 - Quem envia não mostra nada: o usuário já está olhando o outro PC. Falhas (vizinho
   desligado, endereço errado, conteúdo acima do limite) vão para o stderr.
-- Quem recebe avisa onde o usuário está olhando quando **recusa** uma mensagem: chave
-  diferente ou relógio fora da janela. No macOS e no Windows, pelo HUD do app; no
-  Linux, por uma notificação do GNOME (`Main.notify`, pela extensão). No máximo um
-  aviso por minuto, para ninguém na rede conseguir inundar a tela.
-- Não há resposta pela rede: o protocolo é só de ida.
+- Quem recebe avisa onde o usuário está olhando quando **recusa** uma mensagem por
+  chave diferente. No macOS e no Windows, pelo HUD do app; no Linux, por uma
+  notificação do GNOME (`Main.notify`, pela extensão). No máximo um aviso por minuto,
+  para ninguém na rede conseguir inundar a tela.
+- A única resposta pela rede é o desafio; quem envia não fica sabendo se deu certo.
 
 ### Ler e gravar em cada sistema
 
@@ -167,18 +168,23 @@ pub trait Copia: Send + Sync {
 
 - TCP direto, porta fixa **24811** (escolha minha, ao lado da 24800 do Deskflow),
   ouvindo em todas as interfaces só enquanto a área de transferência estiver ligada.
-- Uma conexão por envio, só de ida. O vizinho de cada lado ganha um endereço: nome
+- Uma conexão por envio. O vizinho de cada lado ganha um endereço: nome
   `.local` (mDNS: macOS, Ubuntu com avahi, Windows 10+) ou IP. Sem endereço, aquele
   lado não envia.
+- Ao aceitar a conexão, quem recebe manda um **desafio** de 16 bytes aleatórios
+  (`ring::rand::SystemRandom`), novo a cada conexão. Quem envia cifra amarrado a ele,
+  então um quadro capturado não vale em nenhuma outra conexão: nem repetido ao mesmo
+  PC, nem levado a outro PC da fileira, nem devolvido a quem enviou. Isso dispensa
+  relógios sincronizados e memória de quadros já vistos (revisto depois da revisão do
+  código: a primeira versão, com janela de 30 s e nonces guardados, deixava repetir
+  um quadro para outro PC dentro da janela).
 - Quadro: `"KVMC"` + versão `u8` + nonce de 12 bytes + tamanho `u32` + cifrado.
 - Cifra: ChaCha20-Poly1305 do `ring` (já no `Cargo.lock`, via o cliente HTTP do GPUI),
-  cabeçalho como dado associado, nonce aleatório (`ring::rand::SystemRandom`).
-- Dentro do cifrado: hora do envio (ms Unix) + tipo `u8` (1 texto UTF-8, 2 PNG) +
-  dados.
-- Quem recebe descarta, sem responder: chave errada, versão ou tipo desconhecido,
-  tamanho acima de **16 MiB**, hora com mais de 30 s de diferença do próprio relógio,
-  ou nonce já visto nos últimos 30 s (guarda os nonces da janela, para um envio
-  capturado não poder ser repetido).
+  nonce aleatório (`ring::rand::SystemRandom`); dado associado: `"KVMC"` + versão +
+  o desafio.
+- Dentro do cifrado: tipo `u8` (1 texto UTF-8, 2 PNG) + dados.
+- Quem recebe descarta, sem responder: chave errada (inclui quadro feito para outro
+  desafio), versão ou tipo desconhecido, tamanho acima de **16 MiB**.
 - Leitura com prazo de 5 s; uma conexão por vez basta.
 
 ### Chave
@@ -215,8 +221,8 @@ endereço e desligado.
 ### Regras no domínio (testáveis sem sistema)
 
 - Montar e abrir o quadro, com texto e com PNG: ida e volta; chave errada, quadro
-  adulterado, hora fora da janela, nonce repetido, versão ou tipo desconhecido e
-  tamanho acima do limite são recusados.
+  adulterado, quadro feito para outro desafio, versão ou tipo desconhecido e tamanho
+  acima do limite são recusados.
 - Receber conteúdo igual ao atual não grava; texto e imagem com os mesmos bytes não
   contam como iguais.
 - Lado sem endereço, área de transferência desligada ou Bordas desligado: não envia.
@@ -270,6 +276,5 @@ endereço e desligado.
   Ctrl+V, o usuário cola o conteúdo antigo; colar de novo resolve.
 - GNOME: a extensão pode quebrar a cada versão grande do Shell (já vale para a borda).
   Os métodos D-Bus ficam acessíveis a qualquer processo da sessão do usuário.
-- Relógios: a janela de 30 s exige relógios sincronizados (NTP, o padrão nos três).
 - Endereço por IP muda com o DHCP; `.local` ou IP fixo no roteador resolvem.
 - `cfg(target_os)`: cada sistema precisa ser compilado e testado na própria máquina.
