@@ -5,6 +5,7 @@ App em Rust + GPUI que troca, por atalho, a entrada do monitor e o canal dos per
 - **Destinos:** um por entrada do monitor (USB-C, DP, HDMI). Cada um tem nome, ícone, canal Logitech e atalho próprio.
 - **Seletor estilo ⌘Tab:** um atalho abre um painel no centro da tela. Com os modificadores pressionados, cada toque na tecla avança (com Shift, volta). Soltar confirma e troca. Um toque rápido alterna para o destino vizinho.
 - **Bordas:** cada PC diz qual vizinho fica à esquerda, à direita, em cima e embaixo. Levar o cursor até aquela borda manda teclado e mouse para o canal Logitech do vizinho, como no Logitech Flow, mas sem rede: cada PC roda o app e o do outro lado devolve. A borda nunca troca a entrada do monitor.
+- **Área de transferência:** com o modo ligado, cruzar uma borda leva junto, cifrado pela rede, o texto ou a imagem copiados para o PC vizinho.
 - **Configuração:** a janela lista as entradas que o monitor informa e deixa editar tudo. Cada mudança é salva na hora.
 
 Roda no macOS, Linux (GNOME) e Windows. As pastas [`macos/`](macos/README.md) e [`linux/`](linux/README.md) guardam a versão anterior, em script, que continua funcionando de forma independente, e os instaladores desses sistemas.
@@ -153,7 +154,7 @@ Só um KVM Switch roda por sessão, em todos os sistemas: dois vigiando a mesma 
 
 ### Bordas
 
-Para PCs lado a lado, cada um com a própria tela. Todos rodam o app e cada um configura só os próprios vizinhos; eles não se falam pela rede.
+Para PCs lado a lado, cada um com a própria tela. Todos rodam o app e cada um configura só os próprios vizinhos; para teclado e mouse eles não se falam pela rede (só a [área de transferência](#área-de-transferência) usa a rede).
 
 - **Quadro 3×3:** "Este PC" no centro e um espaço por lado. Em cada lado, o **canal Logitech** do vizinho (clique: `–`, 1, 2, 3) e um **nome** opcional, só para lembrar quem está ali. Lado com `–` não troca nada.
 - **Exemplo:** o Mac usa o canal 1 e o Linux, à direita dele, o canal 2. No Mac, a direita recebe o canal 2; no Linux, a esquerda recebe o canal 1.
@@ -163,9 +164,26 @@ Para PCs lado a lado, cada um com a própria tela. Todos rodam o app e cada um c
 - **macOS e Windows:** o app consulta a posição do cursor e das telas a cada 20 ms, sem pedir permissão. A troca é imediata no primeiro toque na borda, então um vizinho em cima ou embaixo dispara ao encostar na barra de menus ou no Dock do macOS, e um vizinho embaixo dispara ao encostar na barra de tarefas do Windows; a janela avisa ao lado desses espaços.
 - **Linux (GNOME 45 ou mais novo):** o Wayland não deixa um app ver o cursor fora da própria janela. Uma extensão do GNOME Shell põe barreiras de pressão nas bordas externas (as mesmas dos cantos ativos) e, quando o cursor empurra uma delas, roda `kvm-switch edge <lado>`; o app decide se aquele lado tem vizinho. Como é preciso empurrar, encostar não dispara.
 
+### Área de transferência
+
+Ao cruzar uma borda, o texto ou a imagem copiados neste PC vão para a área de transferência do vizinho daquele lado. Depende do modo Bordas.
+
+1. Ligue **Área de transferência (junto com as bordas)**. Na primeira vez o app gera uma chave; religar não a troca.
+2. **Copiar** põe a chave na área de transferência. No outro PC, clique no campo **chave** e cole (⌘V ou Ctrl+V). Todos os PCs precisam da mesma chave; uma chave inválida aparece em vermelho.
+3. Em cada lado do quadro das bordas, preencha o **endereço** do vizinho: o nome `.local` (por exemplo `mac.local`) ou o IP. Lado sem endereço não manda a área de transferência.
+
+Como funciona:
+
+- **O que vai:** texto, se houver; senão uma imagem, em PNG. No máximo 16 MB. Uma célula do Excel ou um trecho do Word chega como texto, sem formatação.
+- **Pela rede:** TCP na porta 24811, cifrado com ChaCha20-Poly1305 e a chave comum. Quem recebe manda um desafio aleatório a cada conexão, que entra na cifra: um quadro capturado na rede não serve para gravar de novo, nem em outro PC. Não depende do relógio dos PCs.
+- **A travessia não espera:** o envio corre em paralelo com a troca dos periféricos. Com o vizinho desligado ou fora da rede, teclado e mouse passam do mesmo jeito; a falha só vai para o stderr.
+- **Quem recebe** só grava se o conteúdo for diferente do que já está lá: ir e voltar não estraga a cópia original (formatada) do PC de origem. Quem envia não guarda nada.
+- **Chave diferente:** o PC que recebe avisa "Chegou uma área de transferência com outra chave: confira a chave nos dois PCs", no máximo uma vez por minuto.
+- **Quem escuta:** no macOS e no Windows, o app aberto. No Linux, o ícone na barra (`kvm-switch tray`), que fica aberto mesmo com o app fechado; ele lê e grava a área de transferência pela extensão do GNOME, porque no Wayland um app sem foco não pode.
+
 ### Configuração em disco
 
-`~/Library/Application Support/kvm-switch/config.json` no macOS, `~/.config/kvm-switch/config.json` no Linux e `%APPDATA%\kvm-switch\config.json` no Windows. `input` é o valor do código VCP 0x60 do monitor, em decimal (27 = USB-C, 15 = DP, 17 = HDMI num Dell P3225QE). `monitor_mode` é o modo Monitor compartilhado; `edges` guarda o modo Bordas (`enabled`) e, em `left`, `right`, `top` e `bottom`, o `channel` e o `name` de cada vizinho.
+`~/Library/Application Support/kvm-switch/config.json` no macOS, `~/.config/kvm-switch/config.json` no Linux e `%APPDATA%\kvm-switch\config.json` no Windows. `input` é o valor do código VCP 0x60 do monitor, em decimal (27 = USB-C, 15 = DP, 17 = HDMI num Dell P3225QE). `monitor_mode` é o modo Monitor compartilhado; `edges` guarda o modo Bordas (`enabled`) e, em `left`, `right`, `top` e `bottom`, o `channel`, o `name` e o `address` de cada vizinho; `clipboard` guarda o modo Área de transferência (`enabled`) e a chave (`key`). Como a chave mora ali, no macOS e no Linux o arquivo é gravado só com permissão do dono (0600).
 
 Um arquivo inválido é renomeado para `config.json.invalido` em vez de ser sobrescrito.
 
@@ -177,7 +195,7 @@ flowchart LR
     ui[ui: janelas GPUI] --> app[app: estado e ações]
     app --> domain[domain: regras da troca]
   end
-  domain --> ports{{ports: Monitor, Peripherals, Hotkeys, EdgeSensor}}
+  domain --> ports{{ports: Monitor, Peripherals, Hotkeys, EdgeSensor, Clipboard}}
   ports --> mac[adapters/macos + logi_bolt]
   ports --> linux[adapters/linux]
   ports --> windows[adapters/windows]
@@ -190,7 +208,10 @@ flowchart LR
 | `src/adapters.rs` | Escolhe os adapters do sistema em que o app foi compilado |
 | `src/adapters/mccs.rs` | Lê as entradas na capability string do monitor |
 | `src/adapters/cursor.rs` | `EdgeSensor` do macOS e do Windows: uma thread lê o cursor e as telas a cada 20 ms e passa às regras das bordas |
+| `src/clip.rs` | A área de transferência sem sistema operacional: o conteúdo (texto ou PNG), a chave, o quadro cifrado com o desafio e o limite de avisos |
+| `src/adapters/net.rs` | A rede da área de transferência: enviar ao vizinho (`share`) e escutar na porta 24811 (`listen`/`relisten`), gravando só o que mudou |
 | `src/adapters/macos.rs` | `Monitor` com `m1ddc` (trocar e ler) e DDPM (listar entradas); `Hotkeys` com `global-hotkey`; `StatusMenu` com `tray-icon`; o cursor e as telas pelo Quartz; o item de login |
+| `src/adapters/macos/clipboard.rs` | `Clipboard` do macOS pelo `NSPasteboard` |
 | `src/adapters/logi_bolt.rs` | macOS: `Peripherals` pelo receptor Logi Bolt, com `hidapitester`, guardando o slot de cada periférico para as trocas seguintes |
 | `src/adapters/linux.rs` | `Monitor` com `ddcutil` |
 | `src/adapters/linux/hidraw.rs` | `Peripherals` pelo receptor Logitech, direto no `hidraw` |
@@ -199,7 +220,10 @@ flowchart LR
 | `linux/gnome-extension/` | A extensão do GNOME Shell (45+) com as barreiras de pressão nas bordas externas, que roda `kvm-switch edge <lado>` |
 | `src/adapters/instance.rs` | Um app por sessão: decide se a execução vira o app, entrega o pedido ao aberto ou pergunta; o transporte é `instance/socket.rs` (socket Unix no Linux e no macOS) ou `instance/pipe.rs` (named pipe no Windows) |
 | `src/adapters/linux/tray.rs` | `kvm-switch tray`: o ícone na barra, num processo à parte e sem GPUI |
+| `src/adapters/linux/clipboard.rs` | `Clipboard` do Linux pelos métodos D-Bus `Ler`, `Gravar` e `Avisar` da extensão do GNOME |
 | `src/adapters/windows.rs` | `Monitor` por DDC/CI, `Peripherals` por HIDAPI, atalhos globais, ícone na área de notificação e o cursor e os monitores pelo Win32 |
+| `src/adapters/windows/clipboard.rs` | `Clipboard` do Windows pela API Win32: texto, PNG e DIB |
+| `src/adapters/dib.rs` | Converte entre DIB (o formato dos prints do Windows) e PNG |
 | `src/request.rs` | Os pedidos em texto (`open`, `switch 27`, `edge direita`, `quit`…), iguais na linha de comando, no socket ou pipe, no menu do ícone e na extensão do GNOME |
 | `src/tray.rs` | O menu do ícone na barra, montado da configuração |
 | `src/app.rs` | Estado do app: configuração, registro de atalhos, seletor, travessias pela borda, avisos |
@@ -214,6 +238,7 @@ As portas:
 | `Peripherals` | Mandar teclado e mouse para um canal |
 | `Hotkeys` | Registrar atalhos globais, entregar cada um como ação, dizer se os modificadores de um atalho ainda estão pressionados (ou que o sistema não deixa saber) |
 | `EdgeSensor` | Vigiar os lados com vizinho e entregar cada travessia como ação (ou, no GNOME, deixar a extensão rodar `kvm-switch edge`), dizendo à janela se as bordas ainda não funcionam |
+| `Clipboard` | Ler a área de transferência (texto, senão PNG) e gravar nela |
 | `StatusMenu` | Mostrar o ícone na barra com o menu montado da configuração e entregar cada item clicado como ação. Opcional: o Linux não tem um no processo do app |
 
 Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kvm-switch.sh): `m1ddc set input` para o monitor e HID++ (`setCurrentHost` da feature `0x1814`) pelo `hidapitester` para os periféricos. O Windows usa as APIs nativas DDC/CI e HID; não requer ferramentas externas.
@@ -226,6 +251,7 @@ Os adapters do macOS usam os mesmos comandos de [`macos/kvm-switch.sh`](macos/kv
 - **`StatusMenu`:** nenhum dentro do app, que encerra com a última janela. O ícone é o `kvm-switch tray`, um StatusNotifierItem por D-Bus (`tray-icon` com `ksni`, sem GTK) que pede cada item rodando `kvm-switch <pedido>`.
 - **Modificadores do seletor:** o Wayland só mostra o teclado à janela em foco. O seletor recebe o foco ao abrir e é ele quem diz ao app quando os modificadores foram soltos. Se a janela não receber o foco, o seletor confirma após 1,2 s sem toques.
 - **`EdgeSensor`:** o Wayland também esconde o cursor fora da janela do app. A extensão põe uma barreira de pressão em cada trecho de borda externa (sem os 8 pontos dos cantos), com a mesma força dos cantos ativos (cerca de 100 pontos de empurrão em 1 s), refeitas quando os monitores mudam; vale também na visão geral. Cada empurrão roda `kvm-switch edge <lado>`, ignorando novos empurrões enquanto ele roda e por 1 s depois. Com o app fechado, a troca roda sem janela. Ao ligar as Bordas, o app roda `gnome-extensions enable` (ou, se o GNOME ainda não carregou a extensão, a põe em `enabled-extensions`) e confere o estado com `gnome-extensions info`.
+- **`Clipboard`:** no Wayland um app sem foco não lê nem grava a área de transferência. A extensão exporta, na conexão de sessão do gnome-shell, o objeto `/io/github/mpgxc/KvmSwitch` com a interface `io.github.mpgxc.KvmSwitch`: `Ler` (tipo `texto`, `png` ou vazio, e os bytes), `Gravar` e `Avisar` (uma notificação do GNOME). O app chama por `zbus`, com limite de 2 s por chamada. Precisa da extensão ativa, como as bordas.
 
 Fora do GNOME o app funciona, mas não cria os atalhos: crie-os no seu ambiente gráfico apontando para os comandos acima.
 
@@ -236,14 +262,15 @@ Fora do GNOME o app funciona, mas não cria os atalhos: crie-os no seu ambiente 
 - **`Hotkeys`:** `global-hotkey` registra as combinações no loop Win32 do app. A tecla Windows aparece como `Super` na configuração.
 - **`StatusMenu`:** `tray-icon` cria o ícone e o menu na área de notificação do Windows, no mesmo processo do app.
 - **`EdgeSensor`:** a mesma thread do macOS (`adapters/cursor.rs`), lendo o cursor com `GetCursorPos` e os monitores com `EnumDisplayMonitors`, nas coordenadas da tela virtual. Sem gancho de mouse e sem permissão extra.
+- **`Clipboard`:** texto em `CF_UNICODETEXT`; imagem no formato registrado `PNG` e também em `CF_DIB`, que vários programas exigem. Prints (Win+Shift+S, Paint) só trazem DIB, convertido para PNG antes de enviar.
 - **Abrir com o Windows:** o instalador cria, na pasta Inicializar, um atalho que roda `kvm-switch.exe start`, para as bordas valerem desde o login.
 
 O `Cargo.toml` aponta a `xattr` para `vendor/xattr`: o GPUI 0.2.2 depende da versão 0.2.3, que não compila no Linux com a `libc` atual. A cópia tem uma constante corrigida e mais nada.
 
 ### Adicionar um sistema
 
-1. Crie `src/adapters/<sistema>.rs` implementando `Monitor`, `Peripherals`, `Hotkeys` e `EdgeSensor`.
-2. Em `src/adapters.rs`, adicione as funções `devices`, `hotkeys`, `edge_sensor` e `first_action` do sistema com `#[cfg(target_os = "...")]`.
+1. Crie `src/adapters/<sistema>.rs` implementando `Monitor`, `Peripherals`, `Hotkeys`, `EdgeSensor` e `Clipboard`.
+2. Em `src/adapters.rs`, adicione as funções `devices`, `hotkeys`, `edge_sensor`, `clipboard` e `first_action` do sistema com `#[cfg(target_os = "...")]`.
 3. Mova as dependências específicas para a seção `target` correspondente do `Cargo.toml`.
 
 ## Testes
@@ -252,7 +279,7 @@ O `Cargo.toml` aponta a `xattr` para `vendor/xattr`: o GPUI 0.2.2 depende da ver
 cargo test
 ```
 
-Cobrem as regras da troca (com monitor e periféricos de mentira), as bordas (a travessia nunca toca o monitor, borda externa com várias telas, cantos, armar/desarmar), os parsers das saídas reais de `m1ddc`, DDPM, `hidapitester`, `ddcutil`, `gsettings` e dos pacotes do receptor Logitech, a conversão dos atalhos para o GNOME, a gravação da configuração (inclusive arquivos de antes dos modos) e a edição de nome, atalhos, modos e vizinhos na janela. Os testes de cada adapter só rodam no sistema dele.
+Cobrem as regras da troca (com monitor e periféricos de mentira), as bordas (a travessia nunca toca o monitor, borda externa com várias telas, cantos, armar/desarmar), os parsers das saídas reais de `m1ddc`, DDPM, `hidapitester`, `ddcutil`, `gsettings` e dos pacotes do receptor Logitech, a conversão dos atalhos para o GNOME, a gravação da configuração (inclusive arquivos de antes dos modos e da área de transferência), a edição de nome, atalhos, modos, vizinhos, endereços e chave na janela, e a área de transferência (quadro cifrado, chave errada, quadro repetido, conteúdo igual não regravado, envio e escuta de verdade em `localhost`, conversão DIB ↔ PNG). Os testes de cada adapter só rodam no sistema dele.
 
 ## Limites conhecidos
 
@@ -260,7 +287,10 @@ Cobrem as regras da troca (com monitor e periféricos de mentira), as bordas (a 
 - O seletor não tem tecla de cancelar. Para desistir, avance até o destino marcado como "aqui" e solte.
 - No Linux só o ícone na barra abre no login; os atalhos e as bordas funcionam com o app fechado.
 - No macOS o abrir no login não tem interruptor na janela, e só vale com o app instalado em Aplicativos.
-- As bordas não passam a posição do cursor nem a área de transferência para o outro PC: não há rede entre eles. A volta depende do app rodando no outro PC.
+- As bordas não passam a posição do cursor para o outro PC. A volta depende do app rodando no outro PC.
+- Receber a área de transferência exige o app aberto (macOS e Windows) ou o ícone na barra (Linux) no PC de destino.
+- Firewall: no Windows a primeira escuta abre o pedido do firewall; aceite em "Redes privadas". No macOS, com o firewall ligado, ele pergunta na primeira escuta. No Ubuntu com `ufw` ligado: `sudo ufw allow 24811/tcp`.
+- Senhas copiadas também vão para o vizinho, cifradas, e podem ficar no histórico da área de transferência dele.
 - No Linux o GPUI não aceita o token de ativação que o GNOME manda no clique do ícone: a janela aberta pelo menu pode não receber o foco.
 - No macOS o app procura teclado e mouse no receptor ao abrir (cerca de 1 s, até 2 s com algum em repouso) e guarda em que slot cada um está; as trocas seguintes levam cerca de 0,02 s. Um periférico desligado, em repouso ou em outro PC nessa busca entra depois da troca seguinte. Um slot pareado de novo com outro modelo só é reconhecido depois de reabrir o app.
 - No Linux o seletor e os avisos são janelas comuns do Wayland: recebem o foco enquanto estão abertos e é o GNOME que escolhe onde ficam na tela.
