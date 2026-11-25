@@ -1,16 +1,18 @@
-//! Janela de configuração: destinos, nomes, ícones, canais, atalhos, modos e bordas.
+//! Janela de configuração: destinos, nomes, ícones, canais, atalhos, modos, bordas e a chave
+//! da área de transferência.
 
 use gpui::{
-    App, AppContext as _, Bounds, BoxShadow, Context, CursorStyle, Decorations, Div, ElementId,
-    Entity, FocusHandle, FontWeight, Global, HitboxBehavior, KeyDownEvent, Keystroke, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, ResizeEdge, Size, Stateful, Tiling, TitlebarOptions,
-    Window, WindowBounds, WindowDecorations, WindowHandle, WindowOptions, canvas, div, hsla, point,
-    prelude::*, px, rgb, size,
+    App, AppContext as _, Bounds, BoxShadow, ClipboardItem, Context, CursorStyle, Decorations, Div,
+    ElementId, Entity, FocusHandle, FontWeight, Global, HitboxBehavior, KeyDownEvent, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, Pixels, Point, Render, ResizeEdge, Size, Stateful,
+    Tiling, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowHandle, WindowOptions,
+    canvas, div, hsla, point, prelude::*, px, rgb, size,
 };
 
 use super::{CONTROL_HEIGHT, button, theme};
 use crate::{
     app::AppState,
+    clip::Key,
     domain::{Channel, Config, Edges, InputCode, Neighbor, Side, Target},
 };
 
@@ -112,6 +114,8 @@ pub fn open(cx: &mut App) {
 enum Field {
     Name(usize),
     EdgeName(Side),
+    EdgeAddress(Side),
+    ClipboardKey,
     Hotkey(usize),
     SwitcherHotkey,
 }
@@ -121,6 +125,8 @@ impl Field {
         match self {
             Field::Name(index) => ("name", index).into(),
             Field::EdgeName(side) => ("edge-name", side as usize).into(),
+            Field::EdgeAddress(side) => ("edge-address", side as usize).into(),
+            Field::ClipboardKey => "clipboard-key".into(),
             Field::Hotkey(index) => ("hotkey", index).into(),
             Field::SwitcherHotkey => "switcher-hotkey".into(),
         }
@@ -210,13 +216,20 @@ impl SettingsView {
         });
     }
 
-    /// Muda o texto do campo de nome em edição: de um destino ou de um vizinho.
+    /// Muda o texto do campo de texto em edição: nome de um destino, nome ou endereço de um
+    /// vizinho, ou a chave da área de transferência.
     fn edit_name(&mut self, field: Field, cx: &mut Context<Self>, edit: impl FnOnce(&mut String)) {
         match field {
             Field::Name(index) => self.edit_target(index, cx, |target| edit(&mut target.name)),
             Field::EdgeName(side) => {
                 self.edit_config(cx, |config| edit(&mut config.edges.neighbor_mut(side).name));
             }
+            Field::EdgeAddress(side) => {
+                self.edit_config(cx, |config| {
+                    edit(&mut config.edges.neighbor_mut(side).address);
+                });
+            }
+            Field::ClipboardKey => self.edit_config(cx, |config| edit(&mut config.clipboard.key)),
             Field::Hotkey(_) | Field::SwitcherHotkey => {}
         }
     }
@@ -228,7 +241,7 @@ impl SettingsView {
                 state.config.switcher_hotkey = shortcut;
                 state.save(cx);
             }),
-            Field::Name(_) | Field::EdgeName(_) => {}
+            Field::Name(_) | Field::EdgeName(_) | Field::EdgeAddress(_) | Field::ClipboardKey => {}
         }
         self.stop_editing(cx);
     }
@@ -242,6 +255,16 @@ impl SettingsView {
         let chord = modifiers.control || modifiers.alt || modifiers.platform;
 
         if !field.records_hotkey() {
+            // A chave é longa demais para digitar: no campo dela, colar troca o texto todo.
+            if field == Field::ClipboardKey
+                && keystroke.key == "v"
+                && modifiers == Modifiers::secondary_key()
+            {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    self.edit_name(field, cx, |key| *key = text.trim().to_string());
+                }
+                return;
+            }
             // shortcut: sem cursor, seleção nem composição de acentos; trocar por um
             // campo de texto completo quando os nomes precisarem de mais que digitar e apagar.
             match keystroke.key.as_str() {
@@ -281,7 +304,7 @@ impl SettingsView {
     ) -> Stateful<Div> {
         let editing = self.editing == Some(field);
         let (label, muted) = match (editing, field) {
-            (true, Field::Name(_) | Field::EdgeName(_)) => (format!("{text}▏"), false),
+            (true, field) if !field.records_hotkey() => (format!("{text}▏"), false),
             (true, _) => ("pressione o atalho…".to_string(), true),
             (false, _) if text.is_empty() => (placeholder.to_string(), true),
             (false, _) => (text, false),
@@ -420,8 +443,9 @@ impl SettingsView {
             .child(rest)
     }
 
-    /// Casa de um lado no quadro das bordas: o canal (cada clique passa para o próximo) e o
-    /// nome do PC vizinho, que só serve para o usuário se achar.
+    /// Casa de um lado no quadro das bordas: o canal (cada clique passa para o próximo), o
+    /// nome do PC vizinho, que só serve para o usuário se achar, e o endereço para onde vai a
+    /// área de transferência.
     fn edge_cell(&self, side: Side, neighbor: &Neighbor, cx: &Context<Self>) -> Div {
         let label = neighbor
             .channel
@@ -446,13 +470,23 @@ impl SettingsView {
                     })),
             )
             .child(
-                self.field(
-                    Field::EdgeName(side),
-                    neighbor.name.clone(),
-                    "nome do PC",
-                    cx,
-                )
-                .w(px(EDGE_NAME_WIDTH)),
+                div()
+                    .w(px(EDGE_NAME_WIDTH))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(self.field(
+                        Field::EdgeName(side),
+                        neighbor.name.clone(),
+                        "nome do PC",
+                        cx,
+                    ))
+                    .child(self.field(
+                        Field::EdgeAddress(side),
+                        neighbor.address.clone(),
+                        "endereço (pc.local ou IP)",
+                        cx,
+                    )),
             )
     }
 
@@ -703,6 +737,61 @@ impl Render for SettingsView {
                                         config.edges.enabled = !config.edges.enabled;
                                     });
                                 })),
+                            )
+                            .child(
+                                toggle(
+                                    "ClipboardMode",
+                                    "Área de transferência (junto com as bordas)",
+                                    config.clipboard.enabled,
+                                )
+                                .when(!config.edges.enabled, |toggle| {
+                                    toggle.opacity(INACTIVE_OPACITY)
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.edit_config(cx, |config| {
+                                        let clipboard = &mut config.clipboard;
+                                        clipboard.enabled = !clipboard.enabled;
+                                        if clipboard.enabled && clipboard.key.trim().is_empty() {
+                                            clipboard.key = Key::generate();
+                                        }
+                                    });
+                                })),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        self.field(
+                                            Field::ClipboardKey,
+                                            config.clipboard.key.clone(),
+                                            "chave",
+                                            cx,
+                                        )
+                                        // A chave tem 44 caracteres: em letra menor, cabe ao lado do quadro.
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .text_xs(),
+                                    )
+                                    .child(
+                                        button("copy-key", "Copiar")
+                                            .debug_selector(|| "CopyKey".to_string())
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let key =
+                                                    this.state.read(cx).config.clipboard.key.clone();
+                                                cx.write_to_clipboard(ClipboardItem::new_string(key));
+                                            })),
+                                    ),
+                            )
+                            .when(
+                                config.clipboard.enabled && Key::parse(&config.clipboard.key).is_err(),
+                                |column| {
+                                    column.child(div().text_color(rgb(theme::ERROR)).child(
+                                        "Chave inválida: copie a chave de outro PC com o botão Copiar",
+                                    ))
+                                },
                             )
                             .child(div().text_sm().text_color(rgb(theme::MUTED)).child(
                                 "Bordas: levar o mouse até um lado com canal manda teclado e mouse para o PC daquele lado. A tela fica.",
@@ -1281,6 +1370,67 @@ mod tests {
             window.click("EdgeChannel(Top)");
             assert_eq!(window.config().edges.top.channel, expected);
         }
+    }
+
+    #[gpui::test]
+    fn turning_the_clipboard_on_creates_a_key_once(cx: &mut TestAppContext) {
+        let mut window = open("clipboard-mode", cx);
+        window.click("ClipboardMode");
+        let key = window.config().clipboard.key;
+        assert!(window.config().clipboard.enabled);
+        assert!(Key::parse(&key).is_ok(), "chave gerada inválida: {key}");
+
+        window.click("ClipboardMode");
+        window.click("ClipboardMode");
+        assert_eq!(
+            window.config().clipboard.key,
+            key,
+            "religar não troca a chave"
+        );
+        assert_eq!(
+            config::load(&window.config_path)
+                .expect("carregar")
+                .clipboard
+                .key,
+            key
+        );
+    }
+
+    #[gpui::test]
+    fn typing_edits_the_neighbor_address_and_saves_it(cx: &mut TestAppContext) {
+        let mut window = open("edge-address", cx);
+        window.click("EdgeAddress(Left)");
+        window.cx.simulate_keystrokes("p c 1 enter z");
+        assert_eq!(window.config().edges.left.address, "pc1");
+        let saved = config::load(&window.config_path).expect("carregar");
+        assert_eq!(saved.edges.left.address, "pc1");
+    }
+
+    #[gpui::test]
+    fn pasting_a_key_replaces_it(cx: &mut TestAppContext) {
+        let mut window = open("paste-key", cx);
+        let key = Key::generate();
+        window
+            .cx
+            .write_to_clipboard(ClipboardItem::new_string(format!("  {key}\n")));
+        window.click("ClipboardKey");
+        let paste = if cfg!(target_os = "macos") {
+            "cmd-v"
+        } else {
+            "ctrl-v"
+        };
+        window.cx.simulate_keystrokes(paste);
+        assert_eq!(window.config().clipboard.key, key);
+    }
+
+    #[gpui::test]
+    fn copy_key_puts_it_on_the_clipboard(cx: &mut TestAppContext) {
+        let mut window = open("copy-key", cx);
+        window.click("ClipboardMode");
+        let key = window.config().clipboard.key;
+        window.click("CopyKey");
+        let copied = window.cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied, Some(key));
     }
 
     #[test]

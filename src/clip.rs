@@ -49,13 +49,6 @@ pub struct Key(LessSafeKey);
 
 impl Key {
     /// 32 bytes de `ring::rand::SystemRandom`, em base64 padrão (44 caracteres).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "o botão de gerar a chave chega com a janela na Task 8"
-        )
-    )]
     pub fn generate() -> String {
         let mut bytes = [0u8; 32];
         SystemRandom::new()
