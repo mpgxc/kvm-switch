@@ -21,7 +21,10 @@ use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom as _, SystemRandom};
 
 /// Porta TCP fixa onde cada PC ouve o vizinho (ao lado da 24800 do Deskflow).
-#[expect(dead_code, reason = "sem uso nem nos testes até a ligação na Task 7")]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "usado a partir da ligação na Task 7")
+)]
 pub const PORT: u16 = 24811;
 /// Maior conteúdo aceito; acima disso não se envia nem se aloca ao receber.
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;

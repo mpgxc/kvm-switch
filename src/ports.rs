@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 
+use crate::clip::Clip;
 use crate::domain::{Channel, Config, InputCode, Side};
 
 /// Controle do monitor por DDC/CI.
@@ -20,6 +21,18 @@ pub trait Monitor: Send + Sync {
 pub trait Peripherals: Send + Sync {
     /// Manda todos os periféricos para o canal. Erro se nenhum for encontrado.
     fn switch_to(&self, channel: Channel) -> Result<()>;
+}
+
+/// A área de transferência deste PC. Chamada fora da thread do GPUI.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "usado a partir da ligação na Task 7")
+)]
+pub trait Clipboard: Send + Sync {
+    /// Texto, se houver; senão imagem PNG; `None` sem nenhum dos dois.
+    fn read(&self) -> Result<Option<Clip>>;
+    /// Ler logo depois devolve os mesmos bytes.
+    fn write(&self, clip: &Clip) -> Result<()>;
 }
 
 /// O que chega de fora das janelas: um atalho global, um item do ícone na barra

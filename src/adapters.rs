@@ -15,6 +15,7 @@ mod logi_bolt;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mccs;
+mod net;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -53,6 +54,8 @@ pub const LOCAL_ICON: &str = "🐧";
 pub const LOCAL_ICON: &str = "🪟";
 
 pub use instance::{Launch, deliver, first_action, take_over};
+#[expect(unused_imports, reason = "usado a partir da ligação na Task 7")]
+pub use net::{ClipListener, SEND_DEADLINE, listen, share};
 
 #[cfg(target_os = "linux")]
 pub use linux::run_tray;
