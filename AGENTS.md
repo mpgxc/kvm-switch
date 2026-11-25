@@ -1,10 +1,10 @@
 # Repository Guidelines
 
 ## Project Overview
-`kvm-switch` is a Rust desktop app for macOS, Linux and Windows. It has two independent modes, both toggled in the settings window:
+`kvm-switch` is a Rust desktop app for macOS, Linux and Windows. It has two independent modes plus a clipboard mode that rides on Bordas, all toggled in the settings window:
 - **Monitor compartilhado** (`Config.monitor_mode`, on by default): a hotkey, tray click or CLI request switches two things together: the monitor input (DDC/CI VCP `0x60`) and the Logitech Easy-Switch channel (HID++ 2.0 feature `0x1814` CHANGE_HOST over a Logi Bolt receiver `046D:C548`).
 - **Bordas** (`Config.edges`, off by default): PCs side by side, each with its own screen and each running the app. When the cursor touches an outer edge of the desktop on a side that has a neighbor, only the keyboard and mouse go to that neighbor's channel. No network for the devices: the other PC's app sends them back the same way.
-- **Área de transferência** (`Config.clipboard`, off by default, needs Bordas): on an edge crossing, the clipboard (text, else PNG) goes encrypted over TCP port 24811 to the neighbor's `address` (`.local` name or IP). This is the only network traffic.
+- **Área de transferência** (`Config.clipboard`, off by default, needs Bordas): on an edge crossing, the clipboard (text, else PNG) goes encrypted over TCP port 24811 to the neighbor's `address` (`.local` name or IPv4; the listener binds IPv4 only). This is the only network traffic.
 - The GPUI windows offer a settings view and a ⌘Tab-style "switcher" overlay.
 - `linux/` and `macos/` hold the **legacy shell/Python/Hammerspoon version**. It still works on its own and installs separately from the app.
 - All identifiers, comments, docs, user-facing strings and error messages are **Brazilian Portuguese**. Keep new code in Portuguese too; test function names are the only exception and stay in English.
@@ -17,7 +17,7 @@ The code follows hexagonal (ports and adapters) layering, described in the `src/
   - Use case: `Kvm { Arc<dyn Monitor>, Arc<dyn Peripherals> }` with `detect()`, `switch()` and `cross(&Edges, Side)`.
 - `ports.rs` defines the traits each OS must provide: `Monitor`, `Peripherals`, `Clipboard` (all `Send + Sync`; `Clipboard::read` gives text, else PNG), `Hotkeys`, `StatusMenu` and `EdgeSensor`, plus `enum Action` (including `CrossEdge(Side)` and `Start`, the window-less start used by the macOS login item and the Windows startup shortcut).
 - `clip.rs`: the OS-free clipboard core: `Clip { Text, Png }`, `Key` (32 random bytes in base64; `generate`/`parse`), the frame and `NoticeGate`. Frame: `"KVMC"` + version + 12-byte nonce + `u32` BE length + ChaCha20-Poly1305 body (`ring`). The receiver sends a fresh 16-byte challenge on each connection, and the AEAD associated data is `"KVMC"` + version + that challenge, so a captured frame is useless on any other connection. No clock window, no NTP.
-- `adapters/net.rs`: `share` (connect, read the challenge, send one frame; 300 ms connect, 5 s I/O, `SEND_DEADLINE` 5.6 s) and `listen`/`relisten` (a thread on `0.0.0.0:24811`; `relisten` restarts only when the key changed and stops when `clip_key()` is `None`). A wrong key notifies at most once a minute.
+- `adapters/net.rs`: `share` (connect, read the challenge, send one frame; 300 ms connect, 300 ms challenge read, 5 s write, `SEND_DEADLINE` 5.6 s) and `listen`/`relisten` (a thread on `0.0.0.0:24811`; `relisten` restarts only when the key changed and stops when `clip_key()` is `None`). A wrong key notifies at most once a minute.
 - `adapters.rs` does the wiring:
   - `Platform { monitor, peripherals, hotkeys, status_menu, edge_sensor, clipboard }`.
   - Each OS has its own `#[cfg(target_os)]` versions of `devices`, `hotkeys`, `status_menu`, `edge_sensor` and `clipboard`; `first_action` and `listen` come from the shared `instance` module. Any other OS hits `compile_error!`.
@@ -67,10 +67,12 @@ Platform specifics:
 - On Linux, GPUI quits with its last window:
   - Open the new HUD or switcher before closing the old one.
   - `app::finish_switches()` (the `IN_FLIGHT` guard) waits for pending switches.
-- An edge crossing never waits for the clipboard send (it runs on its own thread; the GPUI path doesn't await it).
+- One frame per connection, bound to that connection's challenge; a replayed frame writes nothing.
+
+**Clipboard invariants (app wiring, not covered by tests; don't break them):**
+- An edge crossing never waits for the clipboard send (it runs on its own thread; the GPUI path doesn't await it). The send doesn't hold `InFlight`, so `finish_switches()` doesn't wait for it.
 - The receiver writes only content different from what its clipboard already has (`should_write`), so a round trip keeps the original rich copy.
 - The sender keeps no state; each crossing reads the clipboard fresh.
-- One frame per connection, bound to that connection's challenge; a replayed frame writes nothing.
 
 ## Key Directories
 | Path | Purpose |

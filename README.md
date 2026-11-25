@@ -169,8 +169,8 @@ Para PCs lado a lado, cada um com a própria tela. Todos rodam o app e cada um c
 Ao cruzar uma borda, o texto ou a imagem copiados neste PC vão para a área de transferência do vizinho daquele lado. Depende do modo Bordas.
 
 1. Ligue **Área de transferência (junto com as bordas)**. Na primeira vez o app gera uma chave; religar não a troca.
-2. **Copiar** põe a chave na área de transferência. No outro PC, clique no campo **chave** e cole (⌘V ou Ctrl+V). Todos os PCs precisam da mesma chave; uma chave inválida aparece em vermelho.
-3. Em cada lado do quadro das bordas, preencha o **endereço** do vizinho: o nome `.local` (por exemplo `mac.local`) ou o IP. Lado sem endereço não manda a área de transferência.
+2. No primeiro PC, clique em **Copiar** para pôr a chave na área de transferência. A travessia não leva a chave (sem a mesma chave nos dois lados, quem recebe recusa): leve-a aos outros PCs por outro meio (uma mensagem, um arquivo, um pen drive) e, em cada um, clique no campo **chave** e cole (⌘V ou Ctrl+V) por cima da chave gerada. Todos os PCs precisam da mesma chave; com uma chave inválida, aparece um aviso em vermelho abaixo do campo.
+3. Em cada lado do quadro das bordas, preencha o **endereço** do vizinho: o nome `.local` (por exemplo `mac.local`) ou o IPv4. Lado sem endereço não manda a área de transferência.
 
 Como funciona:
 
@@ -180,6 +180,7 @@ Como funciona:
 - **Quem recebe** só grava se o conteúdo for diferente do que já está lá: ir e voltar não estraga a cópia original (formatada) do PC de origem. Quem envia não guarda nada.
 - **Chave diferente:** o PC que recebe avisa "Chegou uma área de transferência com outra chave: confira a chave nos dois PCs", no máximo uma vez por minuto.
 - **Quem escuta:** no macOS e no Windows, o app aberto. No Linux, o ícone na barra (`kvm-switch tray`), que fica aberto mesmo com o app fechado; ele lê e grava a área de transferência pela extensão do GNOME, porque no Wayland um app sem foco não pode.
+- **Ao atualizar no Linux:** os métodos novos da extensão do GNOME só carregam depois de sair e entrar de novo na sessão (Wayland), e o `kvm-switch tray` em execução precisa reiniciar (ou sair e entrar) antes de o Linux receber.
 
 ### Configuração em disco
 

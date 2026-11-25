@@ -5,7 +5,10 @@
 //! thread do GPUI.
 
 use anyhow::{Context as _, Result, bail};
-use objc2::{msg_send, rc::Retained};
+use objc2::{
+    msg_send,
+    rc::{Retained, autoreleasepool},
+};
 use objc2_app_kit::{
     NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypePNG,
     NSPasteboardTypeString, NSPasteboardTypeTIFF,
@@ -51,48 +54,56 @@ impl Drop for MacClipboard {
 
 impl Clipboard for MacClipboard {
     fn read(&self) -> Result<Option<Clip>> {
-        let board = self.board();
-        // SAFETY: constantes do AppKit, só lidas.
-        let (string, png, tiff) = unsafe {
-            (
-                NSPasteboardTypeString,
-                NSPasteboardTypePNG,
-                NSPasteboardTypeTIFF,
-            )
-        };
-        if let Some(text) = board.stringForType(string) {
-            return Ok(Some(Clip::Text(text.to_string())));
-        }
-        if let Some(data) = board.dataForType(png) {
-            return Ok(Some(Clip::Png(data.to_vec())));
-        }
-        let Some(data) = board.dataForType(tiff) else {
-            return Ok(None);
-        };
-        // Prints e apps antigos só põem TIFF; o vizinho recebe sempre PNG.
-        let rep = NSBitmapImageRep::imageRepWithData(&data)
-            .context("o AppKit não leu o TIFF da área de transferência")?;
-        // SAFETY: dicionário vazio, então sem valores de tipo errado.
-        let converted = unsafe {
-            rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
-        }
-        .context("o AppKit não converteu o TIFF em PNG")?;
-        Ok(Some(Clip::Png(converted.to_vec())))
+        // A thread da escuta vive para sempre e não tem pool: sem este, os temporários do AppKit vazam.
+        autoreleasepool(|_| {
+            let board = self.board();
+            // SAFETY: constantes do AppKit, só lidas.
+            let (string, png, tiff) = unsafe {
+                (
+                    NSPasteboardTypeString,
+                    NSPasteboardTypePNG,
+                    NSPasteboardTypeTIFF,
+                )
+            };
+            if let Some(text) = board.stringForType(string) {
+                return Ok(Some(Clip::Text(text.to_string())));
+            }
+            if let Some(data) = board.dataForType(png) {
+                return Ok(Some(Clip::Png(data.to_vec())));
+            }
+            let Some(data) = board.dataForType(tiff) else {
+                return Ok(None);
+            };
+            // Prints e apps antigos só põem TIFF; o vizinho recebe sempre PNG.
+            let rep = NSBitmapImageRep::imageRepWithData(&data)
+                .context("o AppKit não leu o TIFF da área de transferência")?;
+            // SAFETY: dicionário vazio, então sem valores de tipo errado.
+            let converted = unsafe {
+                rep.representationUsingType_properties(
+                    NSBitmapImageFileType::PNG,
+                    &NSDictionary::new(),
+                )
+            }
+            .context("o AppKit não converteu o TIFF em PNG")?;
+            Ok(Some(Clip::Png(converted.to_vec())))
+        })
     }
 
     fn write(&self, clip: &Clip) -> Result<()> {
-        let board = self.board();
-        board.clearContents();
-        // SAFETY: constantes do AppKit, só lidas.
-        let (string, png_type) = unsafe { (NSPasteboardTypeString, NSPasteboardTypePNG) };
-        let written = match clip {
-            Clip::Text(text) => board.setString_forType(&NSString::from_str(text), string),
-            Clip::Png(png) => board.setData_forType(Some(&NSData::with_bytes(png)), png_type),
-        };
-        if !written {
-            bail!("o macOS recusou gravar na área de transferência");
-        }
-        Ok(())
+        autoreleasepool(|_| {
+            let board = self.board();
+            board.clearContents();
+            // SAFETY: constantes do AppKit, só lidas.
+            let (string, png_type) = unsafe { (NSPasteboardTypeString, NSPasteboardTypePNG) };
+            let written = match clip {
+                Clip::Text(text) => board.setString_forType(&NSString::from_str(text), string),
+                Clip::Png(png) => board.setData_forType(Some(&NSData::with_bytes(png)), png_type),
+            };
+            if !written {
+                bail!("o macOS recusou gravar na área de transferência");
+            }
+            Ok(())
+        })
     }
 }
 

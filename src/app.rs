@@ -111,9 +111,8 @@ pub fn send_clipboard(
         }
     };
     let (done, finished) = mpsc::channel::<()>();
-    let in_flight = InFlight::begin();
+    // Sem `InFlight`: sair não espera o envio (ele só protege monitor + periféricos).
     thread::spawn(move || {
-        let _in_flight = in_flight;
         if let Err(error) = adapters::share(&*clipboard, &address, &key) {
             eprintln!("kvm-switch: área de transferência: {error:#}");
         }
@@ -228,8 +227,11 @@ impl AppState {
                 notices.try_send(notice).ok();
             }),
         );
-        if let Err(error) = refreshed {
-            self.status = format!("{error:#}");
+        match refreshed {
+            Err(error) => self.status = format!("{error:#}"),
+            // Apaga só o erro de escuta antigo; outros avisos ficam.
+            Ok(()) if self.status.starts_with("não consegui ouvir") => self.status.clear(),
+            Ok(()) => {}
         }
     }
 
