@@ -7,11 +7,14 @@
 // Sem uso até a Task 7 também nos testes, que só cobrem `clip_from` e `wire`.
 #![expect(dead_code, reason = "usado a partir da ligação na Task 7")]
 
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 
 use anyhow::{Context as _, Result, bail};
 use serde::Serialize;
-use zbus::{blocking::Connection, zvariant::DynamicType};
+use zbus::{
+    blocking::{Connection, connection::Builder},
+    zvariant::DynamicType,
+};
 
 use crate::{clip::Clip, ports::Clipboard};
 
@@ -19,6 +22,10 @@ use crate::{clip::Clip, ports::Clipboard};
 const DESTINO: &str = "org.gnome.Shell";
 const CAMINHO: &str = "/io/github/mpgxc/KvmSwitch";
 const INTERFACE: &str = "io.github.mpgxc.KvmSwitch";
+
+/// Um app dono da área de transferência travado deixa o `Ler` sem resposta; sem
+/// limite a chamada (e a troca pela borda) esperaria para sempre.
+const ESPERA: Duration = Duration::from_secs(2);
 
 /// A área de transferência da sessão GNOME, pela extensão.
 pub struct GnomeClipboard;
@@ -50,7 +57,9 @@ fn call<B: Serialize + DynamicType>(method: &str, body: &B) -> Result<zbus::Mess
     let sessao = match SESSAO.get() {
         Some(sessao) => sessao,
         None => {
-            let nova = Connection::session().context("sem conexão D-Bus de sessão")?;
+            let nova = Builder::session()
+                .and_then(|builder| builder.method_timeout(ESPERA).build())
+                .context("sem conexão D-Bus de sessão")?;
             SESSAO.get_or_init(|| nova)
         }
     };
