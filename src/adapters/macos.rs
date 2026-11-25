@@ -31,6 +31,10 @@ use crate::{
     request, tray,
 };
 
+mod clipboard;
+#[expect(unused_imports, reason = "usado a partir da ligação na Task 7")]
+pub use clipboard::MacClipboard;
+
 /// Linha de comando do Dell Display and Peripheral Manager.
 const DDPM: &str = "/Applications/DDPM/DDPM";
 

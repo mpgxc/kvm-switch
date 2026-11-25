@@ -25,6 +25,18 @@ base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
+# Área de transferência (NSPasteboard); já vinham no Cargo.lock pelo GPUI.
+objc2 = { version = "0.6", default-features = false }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSData",
+    "NSDictionary",
+    "NSString",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "NSBitmapImageRep",
+    "NSImageRep",
+    "NSPasteboard",
+] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 global-hotkey = "0.10"
