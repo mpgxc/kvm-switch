@@ -4,9 +4,6 @@
 //! volta como está) e também em `CF_DIB`, porque vários programas só colam DIB.
 //! Prints (Win+Shift+S, Paint) só põem DIB, convertido aqui para PNG.
 
-// Os testes também não usam: nunca tocam a área de transferência do usuário.
-#![expect(dead_code, reason = "usado a partir da ligação na Task 7")]
-
 use std::{iter, ptr, thread, time::Duration};
 
 use anyhow::{Context as _, Result, bail};

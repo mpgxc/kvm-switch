@@ -24,10 +24,6 @@ pub trait Peripherals: Send + Sync {
 }
 
 /// A área de transferência deste PC. Chamada fora da thread do GPUI.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
 pub trait Clipboard: Send + Sync {
     /// Texto, se houver; senão imagem PNG; `None` sem nenhum dos dois.
     fn read(&self) -> Result<Option<Clip>>;

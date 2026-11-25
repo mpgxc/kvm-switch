@@ -2,18 +2,21 @@
 
 use std::{
     path::PathBuf,
-    sync::{Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, mpsc},
+    thread,
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
+use async_channel::Sender;
 use gpui::{AnyWindowHandle, Context, Modifiers, WindowHandle};
 
 use crate::{
-    adapters::{LOCAL_ICON, Platform},
+    adapters::{self, LOCAL_ICON, Platform},
+    clip::Key,
     config,
     domain::{Config, Cycle, InputCode, Kvm, Outcome, Side},
-    ports::{Action, EdgeSensor, Hotkeys, StatusMenu},
+    ports::{Action, Clipboard, EdgeSensor, Hotkeys, StatusMenu},
     ui::{
         overlay::{self, Focus, HudView, Question, SwitcherItem, SwitcherView},
         settings,
@@ -91,6 +94,34 @@ pub fn notice(outcome: &Result<Outcome>, name: &str) -> Option<String> {
     }
 }
 
+/// Com o modo ligado, envia a área de transferência ao vizinho de `side` numa
+/// thread à parte: a travessia nunca espera por ela. O canal devolvido fecha
+/// quando o envio termina. Erros vão para o stderr, nunca para a tela.
+pub fn send_clipboard(
+    config: &Config,
+    side: Side,
+    clipboard: Arc<dyn Clipboard>,
+) -> Option<mpsc::Receiver<()>> {
+    let address = config.clip_destination(side)?.to_owned();
+    let key = match Key::parse(config.clip_key()?) {
+        Ok(key) => key,
+        Err(error) => {
+            eprintln!("kvm-switch: área de transferência: {error:#}");
+            return None;
+        }
+    };
+    let (done, finished) = mpsc::channel::<()>();
+    let in_flight = InFlight::begin();
+    thread::spawn(move || {
+        let _in_flight = in_flight;
+        if let Err(error) = adapters::share(&*clipboard, &address, &key) {
+            eprintln!("kvm-switch: área de transferência: {error:#}");
+        }
+        drop(done);
+    });
+    Some(finished)
+}
+
 pub struct AppState {
     pub config: Config,
     /// Última mensagem de estado ou erro, mostrada na janela de configuração.
@@ -112,6 +143,13 @@ pub struct AppState {
     crossed_at: Option<Instant>,
     /// A pergunta "encerrar?" aberta, para não abrir outra igual.
     quit_question: Option<AnyWindowHandle>,
+    clipboard: Arc<dyn Clipboard>,
+    /// Avisos da escuta da área de transferência, mostrados no HUD por `main`.
+    #[cfg(not(target_os = "linux"))]
+    notices: Sender<String>,
+    /// A escuta e a chave com que ela começou. No Linux quem escuta é o ícone na barra.
+    #[cfg(not(target_os = "linux"))]
+    clip_listener: Option<(String, adapters::ClipListener)>,
 }
 
 struct ActiveSwitcher {
@@ -125,7 +163,9 @@ struct ActiveSwitcher {
 }
 
 impl AppState {
-    pub fn new(platform: Platform, config_path: PathBuf) -> Self {
+    pub fn new(platform: Platform, config_path: PathBuf, notices: Sender<String>) -> Self {
+        #[cfg(target_os = "linux")]
+        drop(notices);
         let (config, status) = match config::load(&config_path) {
             Ok(config) => (config, String::new()),
             Err(error) => (Config::default(), format!("{error:#}")),
@@ -145,10 +185,16 @@ impl AppState {
             crossing: false,
             crossed_at: None,
             quit_question: None,
+            clipboard: platform.clipboard,
+            #[cfg(not(target_os = "linux"))]
+            notices,
+            #[cfg(not(target_os = "linux"))]
+            clip_listener: None,
         };
         state.rebind();
         state.refresh_status_menu();
         state.refresh_edges();
+        state.refresh_clipboard();
         state
     }
 
@@ -158,6 +204,7 @@ impl AppState {
         }
         self.refresh_status_menu();
         self.refresh_edges();
+        self.refresh_clipboard();
         cx.notify();
     }
 
@@ -165,6 +212,30 @@ impl AppState {
     fn refresh_edges(&mut self) {
         self.edges_notice = self.edge_sensor.watch(&self.config.edges.active_sides());
     }
+
+    /// Escuta o vizinho com a chave da configuração atual, ou para de escutar.
+    // shortcut: descartar a escuta roda na thread da interface e pode levar até 5 s
+    // com uma conexão no meio; só acontece ao trocar a chave ou desligar o modo.
+    #[cfg(not(target_os = "linux"))]
+    fn refresh_clipboard(&mut self) {
+        let notices = self.notices.clone();
+        let refreshed = adapters::relisten(
+            &mut self.clip_listener,
+            self.config.clip_key(),
+            self.clipboard.clone(),
+            Box::new(move |notice| {
+                // Sem bloquear a escuta: com o canal cheio ou fechado, o aviso se perde.
+                notices.try_send(notice).ok();
+            }),
+        );
+        if let Err(error) = refreshed {
+            self.status = format!("{error:#}");
+        }
+    }
+
+    /// No Linux quem escuta é o ícone na barra (`kvm-switch tray`), que vive mais que o app.
+    #[cfg(target_os = "linux")]
+    fn refresh_clipboard(&mut self) {}
 
     /// Mostra no menu do ícone na barra os destinos da configuração atual.
     fn refresh_status_menu(&mut self) {
@@ -292,6 +363,7 @@ impl AppState {
                 done.try_send(kvm.cross(&edges, side)).ok();
             })
             .detach();
+        send_clipboard(&self.config, side, self.clipboard.clone());
         cx.spawn(async move |this, cx| {
             let outcome = outcome.recv().await;
             this.update(cx, |this, cx| {

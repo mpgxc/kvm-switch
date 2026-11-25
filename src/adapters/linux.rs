@@ -17,7 +17,6 @@ pub use self::{
 };
 use super::{mccs::capability_inputs, run};
 use crate::{domain::InputCode, ports::Monitor};
-#[expect(unused_imports, reason = "usado a partir da ligação na Task 7")]
 pub use clipboard::GnomeClipboard;
 
 /// O primeiro monitor que responde por DDC/CI, pelo `ddcutil`.

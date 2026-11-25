@@ -3,11 +3,6 @@
 //! Sem chamadas ao sistema, para os testes rodarem em qualquer lugar: a área de
 //! transferência do Windows guarda prints como DIB, e o vizinho só entende PNG.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
-
 use std::io::Cursor;
 
 use png::{BitDepth, ColorType, Transformations};

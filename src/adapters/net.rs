@@ -3,11 +3,6 @@
 //! Só `std::net`, igual em todo sistema. Quem recebe manda um desafio novo a cada
 //! conexão, lê um único quadro amarrado a ele e fecha a conexão.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
-
 use std::io::{self, Read, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs as _};
 use std::sync::Arc;
@@ -26,7 +21,6 @@ use crate::ports::Clipboard;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 pub const IO_TIMEOUT: Duration = Duration::from_secs(5);
 /// O máximo que alguém espera um envio: conectar + desafio + escrever.
-#[expect(dead_code, reason = "sem uso nem nos testes até a ligação na Task 7")]
 pub const SEND_DEADLINE: Duration = Duration::from_millis(5_600);
 /// De quanto em quanto a escuta parada confere se foi descartada.
 const STOP_POLL: Duration = Duration::from_millis(50);
@@ -79,6 +73,35 @@ pub fn share(clipboard: &dyn Clipboard, address: &str, key: &Key) -> Result<()> 
     }
 }
 
+/// Deixa `current` escutando em `PORT` com a chave `key`: só reinicia se ela mudou,
+/// e para sem chave ou com chave inválida. Descartar a escuta pode levar até
+/// `IO_TIMEOUT` com uma conexão no meio.
+pub fn relisten(
+    current: &mut Option<(String, ClipListener)>,
+    key: Option<&str>,
+    clipboard: Arc<dyn Clipboard>,
+    notify: Box<dyn Fn(String) + Send>,
+) -> Result<()> {
+    if let (Some((used, _)), Some(key)) = (&*current, key)
+        && used == key
+    {
+        return Ok(());
+    }
+    // A escuta antiga solta a porta antes de a nova ocupar.
+    *current = None;
+    let Some((text, key)) = key.and_then(|text| Some((text, Key::parse(text).ok()?))) else {
+        return Ok(());
+    };
+    let listener = listen(
+        SocketAddr::from(([0, 0, 0, 0], PORT)),
+        key,
+        clipboard,
+        notify,
+    )?;
+    *current = Some((text.to_owned(), listener));
+    Ok(())
+}
+
 /// Escuta até ser descartado. `notify` recebe os avisos de recusa, já limitados
 /// pelo `NoticeGate`.
 pub fn listen(
@@ -89,6 +112,8 @@ pub fn listen(
 ) -> Result<ClipListener> {
     let listener =
         TcpListener::bind(bind).with_context(|| format!("não consegui ouvir em {bind}"))?;
+    // Só os testes perguntam a porta (ouvem na 0).
+    #[cfg(test)]
     let address = listener.local_addr()?;
     // Sem bloquear no `accept`, a thread vê o pedido de parada a cada `STOP_POLL`.
     listener.set_nonblocking(true)?;
@@ -130,6 +155,7 @@ pub fn listen(
         }
     });
     Ok(ClipListener {
+        #[cfg(test)]
         address,
         stop,
         thread: Some(thread),
@@ -177,11 +203,13 @@ impl Read for Deadline {
 
 /// A escuta em andamento; descartá-la para a thread e solta a porta.
 pub struct ClipListener {
+    #[cfg(test)]
     address: SocketAddr,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(test)]
 impl ClipListener {
     pub fn local_addr(&self) -> SocketAddr {
         self.address

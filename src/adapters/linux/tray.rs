@@ -11,7 +11,7 @@ use std::{
     os::fd::AsRawFd as _,
     path::{Path, PathBuf},
     process::Command,
-    sync::mpsc,
+    sync::{Arc, mpsc},
     thread,
     time::{Duration, SystemTime},
 };
@@ -19,7 +19,14 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent, menu::MenuEvent};
 
-use crate::{config, domain::Config, ports::Action, request, tray};
+use super::GnomeClipboard;
+use crate::{
+    adapters::{ClipListener, relisten},
+    config,
+    domain::Config,
+    ports::Action,
+    request, tray,
+};
 
 /// De quanto em quanto tempo o `config.json` é conferido, para o menu acompanhar a janela.
 const CONFIG_POLL: Duration = Duration::from_secs(2);
@@ -37,6 +44,9 @@ pub fn run() -> Result<()> {
     let _lock = single_instance()?;
     let config_path = config::default_path()?;
     let (config, mut seen) = read(&config_path);
+    // A escuta da área de transferência mora aqui: o ícone fica aberto mais que o app.
+    let mut clip_listener = None;
+    listen_clipboard(&mut clip_listener, &config);
     let icon = TrayIconBuilder::new()
         .with_id("kvm-switch")
         .with_title("KVM Switch")
@@ -85,10 +95,29 @@ pub fn run() -> Result<()> {
                     let (config, now) = read(&config_path);
                     seen = now;
                     icon.set_menu(Some(Box::new(tray::menu(&config)?)));
+                    listen_clipboard(&mut clip_listener, &config);
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
+    }
+}
+
+/// Escuta o vizinho com a chave de `config`, ou para de escutar. Os avisos viram
+/// notificações do GNOME.
+fn listen_clipboard(listener: &mut Option<(String, ClipListener)>, config: &Config) {
+    let notify = Box::new(|notice: String| {
+        if let Err(error) = GnomeClipboard.notify(&notice) {
+            eprintln!("kvm-switch tray: área de transferência: {error:#}");
+        }
+    });
+    if let Err(error) = relisten(
+        listener,
+        config.clip_key(),
+        Arc::new(GnomeClipboard),
+        notify,
+    ) {
+        eprintln!("kvm-switch tray: área de transferência: {error:#}");
     }
 }
 

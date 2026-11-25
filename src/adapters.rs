@@ -26,7 +26,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_channel::Sender;
 
-use crate::ports::{Action, EdgeSensor, Hotkeys, Monitor, Peripherals, StatusMenu};
+use crate::ports::{Action, Clipboard, EdgeSensor, Hotkeys, Monitor, Peripherals, StatusMenu};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::{Context as _, bail};
@@ -41,6 +41,8 @@ pub struct Platform {
     pub status_menu: Option<Box<dyn StatusMenu>>,
     /// Quem percebe o cursor na borda da tela, para o modo Bordas.
     pub edge_sensor: Box<dyn EdgeSensor>,
+    /// A área de transferência deste PC, para o modo de mesmo nome.
+    pub clipboard: Arc<dyn Clipboard>,
 }
 
 /// Ícone do sistema em que o app roda, para o destino "este computador".
@@ -56,8 +58,7 @@ pub const LOCAL_ICON: &str = "🐧";
 pub const LOCAL_ICON: &str = "🪟";
 
 pub use instance::{Launch, deliver, first_action, take_over};
-#[expect(unused_imports, reason = "usado a partir da ligação na Task 7")]
-pub use net::{ClipListener, SEND_DEADLINE, listen, share};
+pub use net::{ClipListener, SEND_DEADLINE, relisten, share};
 
 #[cfg(target_os = "linux")]
 pub use linux::run_tray;
@@ -92,6 +93,24 @@ pub fn devices() -> (Arc<dyn Monitor>, Arc<dyn Peripherals>) {
     )
 }
 
+/// A área de transferência do usuário.
+#[cfg(target_os = "macos")]
+pub fn clipboard() -> Arc<dyn Clipboard> {
+    Arc::new(macos::MacClipboard::general())
+}
+
+/// A área de transferência da sessão GNOME, pela extensão.
+#[cfg(target_os = "linux")]
+pub fn clipboard() -> Arc<dyn Clipboard> {
+    Arc::new(linux::GnomeClipboard)
+}
+
+/// A área de transferência do usuário.
+#[cfg(target_os = "windows")]
+pub fn clipboard() -> Arc<dyn Clipboard> {
+    Arc::new(windows::WindowsClipboard)
+}
+
 /// Monta os adapters deste sistema. Os atalhos pressionados, os itens do ícone na
 /// barra e os pedidos das outras execuções do programa saem por `actions`. No
 /// macOS precisa rodar com o app já iniciado.
@@ -104,6 +123,7 @@ pub fn platform(actions: Sender<Action>) -> Result<Platform> {
         status_menu: status_menu(actions.clone())?,
         edge_sensor: edge_sensor(actions.clone()),
         hotkeys: hotkeys(actions)?,
+        clipboard: clipboard(),
     })
 }
 

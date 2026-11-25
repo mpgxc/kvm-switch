@@ -216,10 +216,6 @@ pub const DEFAULT_ICON: &str = "🖥";
 
 impl Config {
     /// Endereço para onde mandar a área de transferência ao cruzar por `side`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "usado a partir da ligação na Task 7")
-    )]
     pub fn clip_destination(&self, side: Side) -> Option<&str> {
         let address = self.edges.neighbor(side).address.trim();
         (self.edges.channel(side).is_some() && self.clipboard.enabled && !address.is_empty())
@@ -227,10 +223,6 @@ impl Config {
     }
 
     /// Chave da área de transferência, só quando ela deve funcionar.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "usado a partir da ligação na Task 7")
-    )]
     pub fn clip_key(&self) -> Option<&str> {
         let key = self.clipboard.key.trim();
         (self.edges.enabled && self.clipboard.enabled && !key.is_empty()).then_some(key)

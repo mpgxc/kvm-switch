@@ -7,11 +7,6 @@
 //! desafio que quem recebe mandou nesta conexão: um quadro capturado não vale em
 //! outra conexão, nem em outro PC, nem no próprio remetente.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
-
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -21,10 +16,6 @@ use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom as _, SystemRandom};
 
 /// Porta TCP fixa onde cada PC ouve o vizinho (ao lado da 24800 do Deskflow).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
 pub const PORT: u16 = 24811;
 /// Maior conteúdo aceito; acima disso não se envia nem se aloca ao receber.
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -58,6 +49,13 @@ pub struct Key(LessSafeKey);
 
 impl Key {
     /// 32 bytes de `ring::rand::SystemRandom`, em base64 padrão (44 caracteres).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "o botão de gerar a chave chega com a janela na Task 8"
+        )
+    )]
     pub fn generate() -> String {
         let mut bytes = [0u8; 32];
         SystemRandom::new()

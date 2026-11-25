@@ -186,8 +186,15 @@ fn switch_without_window(input: InputCode) -> Option<String> {
 fn cross_without_window(side: Side) -> Option<String> {
     let attempt = || -> Result<()> {
         let config = config::load(&config::default_path()?)?;
+        // O envio começa antes da troca e corre junto com ela.
+        let sending = app::send_clipboard(&config, side, adapters::clipboard());
         let (monitor, peripherals) = adapters::devices();
-        Kvm::new(monitor, peripherals).cross(&config.edges, side)?;
+        let crossed = Kvm::new(monitor, peripherals).cross(&config.edges, side);
+        // Sair encerra a thread do envio: espera por ele, até o limite.
+        if let Some(sending) = sending {
+            sending.recv_timeout(adapters::SEND_DEADLINE).ok();
+        }
+        crossed?;
         Ok(())
     };
     attempt().err().map(|error| format!("{error:#}"))
@@ -200,7 +207,8 @@ fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {
     #[cfg(target_os = "macos")]
     adapters::register_login_item().ok();
     let config_path = config::default_path()?;
-    let state = cx.new(|_| AppState::new(platform, config_path));
+    let (notices, received) = async_channel::unbounded();
+    let state = cx.new(|_| AppState::new(platform, config_path, notices));
     cx.set_global(settings::Shared::new(state.clone()));
 
     let asked = state.clone();
@@ -223,6 +231,15 @@ fn start(cx: &mut App, first: Action, notice: Option<String>) -> Result<()> {
             handler
                 .update(cx, |state, cx| state.handle(action, cx))
                 .ok();
+        }
+    })
+    .detach();
+
+    // Os avisos da escuta da área de transferência vêm de outra thread.
+    let hud = state.clone();
+    cx.spawn(async move |cx| {
+        while let Ok(message) = received.recv().await {
+            hud.update(cx, |state, cx| state.show_hud(message, cx)).ok();
         }
     })
     .detach();

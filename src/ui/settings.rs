@@ -981,8 +981,9 @@ mod tests {
     use super::*;
     use crate::{
         adapters::Platform,
+        clip::Clip,
         config,
-        ports::{Action, EdgeSensor, Hotkeys, Monitor, Peripherals},
+        ports::{Action, Clipboard, EdgeSensor, Hotkeys, Monitor, Peripherals},
     };
 
     const USB_C: InputCode = InputCode(0x1b);
@@ -1008,6 +1009,16 @@ mod tests {
 
     impl Peripherals for NoHardware {
         fn switch_to(&self, _: Channel) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Clipboard for NoHardware {
+        fn read(&self) -> Result<Option<Clip>> {
+            Ok(None)
+        }
+
+        fn write(&self, _: &Clip) -> Result<()> {
             Ok(())
         }
     }
@@ -1096,8 +1107,10 @@ mod tests {
             hotkeys: Box::new(RecordingHotkeys(bindings.clone())),
             status_menu: None,
             edge_sensor: Box::new(RecordingEdges(watched.clone())),
+            clipboard: Arc::new(NoHardware),
         };
-        let state = cx.new(|_| AppState::new(platform, config_path.clone()));
+        let notices = async_channel::unbounded().0;
+        let state = cx.new(|_| AppState::new(platform, config_path.clone(), notices));
         let view_state = state.clone();
         let (_, cx) = cx.add_window_view(|window, cx| SettingsView::new(view_state, window, cx));
         Opened {

@@ -4,11 +4,6 @@
 //! `MacClipboard` é `Send + Sync` sem `unsafe impl` e pode ser usado fora da
 //! thread do GPUI.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "usado a partir da ligação na Task 7")
-)]
-
 use anyhow::{Context as _, Result, bail};
 use objc2::{msg_send, rc::Retained};
 use objc2_app_kit::{
@@ -26,10 +21,6 @@ pub struct MacClipboard {
 
 impl MacClipboard {
     /// A área de transferência do usuário.
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "os testes nunca tocam a área do usuário")
-    )]
     pub fn general() -> Self {
         Self { name: None }
     }

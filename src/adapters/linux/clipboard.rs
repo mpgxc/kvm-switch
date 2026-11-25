@@ -4,9 +4,6 @@
 //! gnome-shell pode, então a extensão exporta `Ler`, `Gravar` e `Avisar` na
 //! conexão de sessão dele (`org.gnome.Shell`).
 
-// Sem uso até a Task 7 também nos testes, que só cobrem `clip_from` e `wire`.
-#![expect(dead_code, reason = "usado a partir da ligação na Task 7")]
-
 use std::{sync::OnceLock, time::Duration};
 
 use anyhow::{Context as _, Result, bail};
