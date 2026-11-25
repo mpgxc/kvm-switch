@@ -17,6 +17,11 @@ serde_json = "1"
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 # Decodifica o PNG do ícone na barra.
 png = "0.18"
+# Cifra (ChaCha20-Poly1305) e nonces aleatórios do quadro da área de transferência;
+# já vinha no Cargo.lock pelo cliente HTTP do GPUI.
+ring = "0.17"
+# A chave da área de transferência aparece e é colada em base64.
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"

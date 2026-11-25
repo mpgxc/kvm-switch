@@ -7,6 +7,7 @@
 
 mod adapters;
 mod app;
+mod clip;
 mod config;
 mod domain;
 mod ports;
