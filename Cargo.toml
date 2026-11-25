@@ -44,6 +44,9 @@ global-hotkey = "0.10"
 [target.'cfg(target_os = "linux")'.dependencies]
 # poll() no hidraw do receptor Logitech.
 libc = "0.2"
+# A área de transferência pelos métodos D-Bus da extensão do GNOME Shell. Já vem
+# pelo tray (ksni) com o runtime `async-io`; aqui só soma a API bloqueante.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # DDC/CI pela Windows Monitor Configuration API, sem utilitário externo.

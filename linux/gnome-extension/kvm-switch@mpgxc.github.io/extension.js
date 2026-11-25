@@ -3,11 +3,16 @@
 // bordas externas da área de trabalho. Empurrar uma delas roda
 // `kvm-switch edge <lado>`; o kvm-switch lê a configuração e decide se o lado tem
 // vizinho, por isso a extensão não sabe nada da configuração.
+//
+// Área de transferência: no Wayland só o Shell lê e grava a área de transferência
+// sem foco, então a extensão exporta `Ler`, `Gravar` e `Avisar` por D-Bus na
+// conexão de sessão do gnome-shell (`org.gnome.Shell`) para o kvm-switch.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import {PACKAGE_VERSION} from 'resource:///org/gnome/shell/misc/config.js';
@@ -20,6 +25,26 @@ const JANELA_MS = 1000;
 const MARGEM = 8;
 // Espera depois de uma troca antes de aceitar outra.
 const PAUSA_MS = 1000;
+
+const CAMINHO_DBUS = '/io/github/mpgxc/KvmSwitch';
+const INTERFACE_DBUS = `<node>
+  <interface name="io.github.mpgxc.KvmSwitch">
+    <method name="Ler">
+      <arg type="s" name="tipo" direction="out"/>
+      <arg type="ay" name="dados" direction="out"/>
+    </method>
+    <method name="Gravar">
+      <arg type="s" name="tipo" direction="in"/>
+      <arg type="ay" name="dados" direction="in"/>
+    </method>
+    <method name="Avisar">
+      <arg type="s" name="texto" direction="in"/>
+    </method>
+  </interface>
+</node>`;
+// Tipos com que um app oferece texto; qualquer um deles vira texto UTF-8 no `get_text`.
+const TIPOS_TEXTO = ['text/plain;charset=utf-8', 'UTF8_STRING', 'text/plain'];
+const ERRO_DBUS = 'io.github.mpgxc.KvmSwitch.Erro';
 
 // Para cada lado: a direção em que a barreira deixa o cursor passar (a de entrar na tela).
 const DIRECOES = {
@@ -68,6 +93,48 @@ function programa() {
         GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'kvm-switch']);
 }
 
+/** Os métodos D-Bus da área de transferência; tipo `texto` (UTF-8), `png` ou `''`. */
+class AreaDeTransferencia {
+    /** Texto quando há texto, senão PNG, senão `''`. Assíncrono: responde pela `invocation`. */
+    LerAsync(_parametros, invocation) {
+        const area = St.Clipboard.get_default();
+        const tipos = area.get_mimetypes(St.ClipboardType.CLIPBOARD);
+        const responder = (tipo, dados) =>
+            invocation.return_value(new GLib.Variant('(say)', [tipo, dados]));
+        if (tipos.some(tipo => TIPOS_TEXTO.includes(tipo))) {
+            area.get_text(St.ClipboardType.CLIPBOARD, (_area, texto) => {
+                if (texto === null)
+                    invocation.return_dbus_error(ERRO_DBUS, 'o texto sumiu da área de transferência');
+                else
+                    responder('texto', new TextEncoder().encode(texto));
+            });
+        } else if (tipos.includes('image/png')) {
+            area.get_content(St.ClipboardType.CLIPBOARD, 'image/png', (_area, bytes) => {
+                if (bytes === null)
+                    invocation.return_dbus_error(ERRO_DBUS, 'a imagem sumiu da área de transferência');
+                else
+                    responder('png', bytes.toArray());
+            });
+        } else {
+            responder('', new Uint8Array());
+        }
+    }
+
+    Gravar(tipo, dados) {
+        const area = St.Clipboard.get_default();
+        if (tipo === 'texto')
+            area.set_text(St.ClipboardType.CLIPBOARD, new TextDecoder().decode(dados));
+        else if (tipo === 'png')
+            area.set_content(St.ClipboardType.CLIPBOARD, 'image/png', new GLib.Bytes(dados));
+        else
+            throw new Error(`tipo desconhecido: ${tipo}`);
+    }
+
+    Avisar(texto) {
+        Main.notify('KVM Switch', texto);
+    }
+}
+
 export default class KvmSwitchBordas extends Extension {
     enable() {
         this._ocupado = false;
@@ -76,9 +143,13 @@ export default class KvmSwitchBordas extends Extension {
         this._pressoes = [];
         this._monitores = Main.layoutManager.connect('monitors-changed', () => this._montar());
         this._montar();
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE_DBUS, new AreaDeTransferencia());
+        this._dbus.export(Gio.DBus.session, CAMINHO_DBUS);
     }
 
     disable() {
+        this._dbus.unexport();
+        this._dbus = null;
         Main.layoutManager.disconnect(this._monitores);
         this._desmontar();
         if (this._pausa)
