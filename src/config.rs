@@ -40,7 +40,17 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("não consegui criar {}", dir.display()))?;
     // Grava ao lado e renomeia: uma queda no meio não deixa o arquivo pela metade.
     let partial = path.with_extension("json.parcial");
-    fs::write(&partial, serde_json::to_string_pretty(config)?)
+    let text = serde_json::to_string_pretty(config)?;
+    // Sobra de uma queda manteria a permissão antiga: o `mode` só vale ao criar.
+    fs::remove_file(&partial).ok();
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // A chave da área de transferência mora aqui: só o dono lê.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+        .open(&partial)
+        .and_then(|mut file| io::Write::write_all(&mut file, text.as_bytes()))
         .and_then(|()| fs::rename(&partial, path))
         .with_context(|| format!("não consegui gravar {}", path.display()))
 }
@@ -48,7 +58,7 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Channel, Edges, InputCode, Neighbor, Target};
+    use crate::domain::{Channel, ClipboardMode, Edges, InputCode, Neighbor, Target};
 
     fn temp_file(name: &str) -> PathBuf {
         let dir =
@@ -74,15 +84,45 @@ mod tests {
             monitor_mode: false,
             edges: Edges {
                 enabled: true,
+                left: Neighbor {
+                    address: "pc.local".into(),
+                    ..Neighbor::default()
+                },
                 right: Neighbor {
                     channel: Some(Channel::Three),
                     name: "Notebook".into(),
+                    ..Neighbor::default()
                 },
                 ..Edges::default()
+            },
+            clipboard: ClipboardMode {
+                enabled: true,
+                key: "k".into(),
             },
         };
         save(&path, &config).expect("salvar");
         assert_eq!(load(&path).expect("carregar"), config);
+    }
+
+    #[test]
+    fn file_from_before_the_clipboard_keeps_it_off() {
+        let config: Config = serde_json::from_str(
+            r#"{"targets": [], "edges": {"enabled": true, "left": {"channel": 2, "name": "Linux"}}}"#,
+        )
+        .expect("arquivo antigo");
+        assert_eq!(config.clipboard, ClipboardMode::default());
+        assert_eq!(config.edges.left.address, "");
+        assert_eq!(config.edges.left.channel, Some(Channel::Two));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_config_is_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = temp_file("private");
+        save(&path, &Config::default()).expect("salvar");
+        let mode = fs::metadata(&path).expect("metadados").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

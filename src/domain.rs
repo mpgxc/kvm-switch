@@ -103,6 +103,8 @@ pub struct Config {
     pub monitor_mode: bool,
     /// Modo Bordas: o cursor na borda manda só teclado e mouse para o PC do lado.
     pub edges: Edges,
+    /// Área de transferência que acompanha o cursor ao cruzar uma borda.
+    pub clipboard: ClipboardMode,
 }
 
 impl Default for Config {
@@ -113,8 +115,17 @@ impl Default for Config {
             switcher_hotkey: None,
             monitor_mode: true,
             edges: Edges::default(),
+            clipboard: ClipboardMode::default(),
         }
     }
+}
+
+/// Modo área de transferência: cifrada com `key`, que é a mesma nos PCs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipboardMode {
+    pub enabled: bool,
+    pub key: String,
 }
 
 /// Lado da tela onde fica um PC vizinho.
@@ -151,6 +162,8 @@ pub struct Neighbor {
     pub channel: Option<Channel>,
     /// Só para mostrar no quadro da configuração.
     pub name: String,
+    /// Nome `.local` ou IP do PC. Vazio: a área de transferência não vai para lá.
+    pub address: String,
 }
 
 /// Os vizinhos de cada lado. A borda só troca teclado e mouse, nunca a tela.
@@ -202,6 +215,27 @@ impl Edges {
 pub const DEFAULT_ICON: &str = "🖥";
 
 impl Config {
+    /// Endereço para onde mandar a área de transferência ao cruzar por `side`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "usado a partir da ligação na Task 7")
+    )]
+    pub fn clip_destination(&self, side: Side) -> Option<&str> {
+        let address = self.edges.neighbor(side).address.trim();
+        (self.edges.channel(side).is_some() && self.clipboard.enabled && !address.is_empty())
+            .then_some(address)
+    }
+
+    /// Chave da área de transferência, só quando ela deve funcionar.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "usado a partir da ligação na Task 7")
+    )]
+    pub fn clip_key(&self) -> Option<&str> {
+        let key = self.clipboard.key.trim();
+        (self.edges.enabled && self.clipboard.enabled && !key.is_empty()).then_some(key)
+    }
+
     /// Cria um destino para cada entrada nova. Nunca remove nem altera os existentes.
     ///
     /// Cada destino novo recebe o primeiro canal Logitech ainda livre: na ordem em
@@ -889,5 +923,42 @@ mod tests {
             watch.observe(Some(Side::Right), &[Side::Right]),
             Some(Side::Right)
         );
+    }
+
+    #[test]
+    fn clip_destination_needs_edges_clipboard_channel_and_address() {
+        let mut config = Config::default();
+        config.edges.left = Neighbor {
+            channel: Some(Channel::Two),
+            name: String::new(),
+            address: " pc.local ".into(),
+        };
+        assert_eq!(config.clip_destination(Side::Left), None); // bordas e área desligadas
+        config.edges.enabled = true;
+        assert_eq!(config.clip_destination(Side::Left), None); // área desligada
+        config.clipboard.enabled = true;
+        assert_eq!(config.clip_destination(Side::Left), Some("pc.local"));
+        assert_eq!(config.clip_destination(Side::Right), None); // sem vizinho
+        config.edges.left.channel = None;
+        assert_eq!(config.clip_destination(Side::Left), None); // lado não atravessa
+        config.edges.left = Neighbor {
+            channel: Some(Channel::One),
+            name: String::new(),
+            address: "  ".into(),
+        };
+        assert_eq!(config.clip_destination(Side::Left), None); // sem endereço
+    }
+
+    #[test]
+    fn clip_key_only_while_edges_and_clipboard_are_on() {
+        let mut config = Config::default();
+        config.clipboard.key = " abc\n".into();
+        assert_eq!(config.clip_key(), None);
+        config.clipboard.enabled = true;
+        assert_eq!(config.clip_key(), None);
+        config.edges.enabled = true;
+        assert_eq!(config.clip_key(), Some("abc"));
+        config.clipboard.key = String::new();
+        assert_eq!(config.clip_key(), None);
     }
 }
