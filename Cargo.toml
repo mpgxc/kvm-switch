@@ -50,10 +50,14 @@ libc = "0.2"
 ddc-hi = { version = "0.4", default-features = false, features = ["ddc-winapi"] }
 # Acesso aos relatórios HID++ do receptor Bolt pela API HID nativa do Windows.
 hidapi = { version = "2", default-features = false, features = ["windows-native"] }
-# Teclas pressionadas (seletor) e posição do cursor e dos monitores (bordas).
+# Teclas pressionadas (seletor), posição do cursor e dos monitores (bordas) e a
+# área de transferência.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }

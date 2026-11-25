@@ -7,6 +7,8 @@
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod cursor;
+#[cfg(any(target_os = "windows", test))]
+mod dib;
 mod instance;
 #[cfg(target_os = "linux")]
 mod linux;

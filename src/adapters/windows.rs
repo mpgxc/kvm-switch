@@ -38,6 +38,10 @@ use crate::{
     request, tray,
 };
 
+mod clipboard;
+#[expect(unused_imports, reason = "usado a partir da ligação na Task 7")]
+pub use clipboard::WindowsClipboard;
+
 /// Feature MCCS que seleciona a entrada de vídeo do monitor.
 const INPUT_SOURCE: u8 = 0x60;
 /// Vendor e product ID do receptor Logi Bolt.
